@@ -5,7 +5,7 @@
 CuQwen is a C++/CUDA inference engine written purely from scratch to explore the theoretical performance limits of single-user (```Batch Size 1```) autoregressive token generation using optimized custom CUDA kernels for open source Qwen models that can run on local edge devices for Nvidia GPUs.
 
 ## Performance
-Average inference speed for **Qwen2.5 Instruct model** across 8K context window
+Average inference speed (tokens/second) for **Qwen2.5 Instruct model** across 8K context window on RTX 3090 
 
 | Model Size | CuQwen | vLLM | Ollama |
 | ---------- | ------ | ---- | ------ |
