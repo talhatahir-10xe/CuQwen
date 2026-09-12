@@ -67,7 +67,7 @@ Install Ollama, launch the background daemon, prepare FP16 GGUF model files, and
 
 ```bash
 apt-get update && apt-get install -y curl zstd
-curl -fsSL [https://ollama.com/install.sh](https://ollama.com/install.sh) | sh
+curl -fsSL https://ollama.com/install.sh | sh
 
 # Configure environment for pure single-sequence testing
 export OLLAMA_KEEP_ALIVE=-1
