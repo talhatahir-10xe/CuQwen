@@ -7,7 +7,7 @@ CuQwen is a C++/CUDA inference engine written purely from scratch to explore the
 ## Performance
 Average inference speed for **Qwen2.5 Instruct model** across 8K context window
 
-| Model SIze | CuQwen | vLLM | Ollama |
+| Model Size | CuQwen | vLLM | Ollama |
 | ---------- | ------ | ---- | ------ |
 | 0.5b       |   490  | 471  | 371    |
 | 1.5b       |   212  | 191  | 160    |
