@@ -168,14 +168,14 @@ Phase 5 targets this long-context decode bottleneck to achieve flat execution sc
 During single-user autoregressive decoding (Batch Size 1), every newly generated token must attend to all historical keys and values stored in the KV cache. Profiling the Phase 4 pipeline under long context lengths revealed two core bottlenecks:
 
 * **Scattered Memory Layout:** Non-contiguous KV cache layouts required strided memory writes at each generation step, incurring host launch overhead and non-coalesced VRAM access.
-* **Single-Block Compute Saturation:** Standard decode attention assigns a single thread block to sequentially scan the past context per query head from $t=0$ to $t=\text{current\_pos}$. As sequence length scales, this single thread block becomes compute and memory-bound, causing linear $O(N)$ performance degradation.
+* **Single-Block Compute Saturation:** Standard decode attention assigns a single thread block to sequentially scan the past context per query head from $t=0$ to $t=currentPosition$. As sequence length scales, this single thread block becomes compute and memory-bound, causing linear $O(N)$ performance degradation.
 
 ### The Solution: Head-Major Layout & 2-Stage FlashDecode
 
 To resolve context scaling degradation, the VRAM cache layout was restructured and a Split-K parallel attention algorithm inspired by FlashDecode was implemented.
 
 * **Head-Major KV Cache Layout:** The KV cache was reorganized into a contiguous `[n_layers, n_kv_heads, max_seq_len, head_dim]` tensor structure. New keys and values are committed via single, contiguous vectorized memory writes per KV head at offset `pos`.
-* **2-Stage FlashDecode (Split-K Parallel Attention):** Instead of processing sequence history sequentially within a single block, FlashDecode splits the context dimension into fixed context tiles ($\text{tile\_size} = 256$).
+* **2-Stage FlashDecode (Split-K Parallel Attention):** Instead of processing sequence history sequentially within a single block, FlashDecode splits the context dimension into fixed context tiles (`tile_size = 256`).
   * **Stage 1 (Parallel Tile Reduction):** Multiple thread blocks launch concurrently across query heads and context tiles. Each block calculates local query-key dot products using vectorized 128-bit loads, computes partial softmax max/sum metrics, and writes partial value vectors to temporary workspace memory.
   * **Stage 2 (Log-Space Rescaling & Merge):** A lightweight second stage uses a single warp per query head to rescan partial tile results using global max scaling, normalizes them in log-space, and merges them into the final attention output vector.
 
