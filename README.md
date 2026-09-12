@@ -1,8 +1,8 @@
-# CuQwen: High-Performance C++/CUDA Engine for Qwen
+# CuQwen: High-Performance CUDA Inference Engine for Qwen
 
 ![CuQwen](/assets/CuQwen.jpeg)
 
-CuQwen is a C++/CUDA inference engine written purely from scratch to explore the theoretical performance limits of single-user (```Batch Size 1```) autoregressive token generation using optimized custom CUDA kernels for open source Qwen models that can run on local edge devices.
+CuQwen is a C++/CUDA inference engine written purely from scratch to explore the theoretical performance limits of single-user (```Batch Size 1```) autoregressive token generation using optimized custom CUDA kernels for open source Qwen models that can run on local edge devices for Nvidia GPUs.
 
 ## Performance
 Average inference speed for **Qwen2.5 Instruct model** across 8K context window
@@ -14,7 +14,7 @@ Average inference speed for **Qwen2.5 Instruct model** across 8K context window
 | 3b         |   114  | 109  | 112    |
 | 7b         |   57   | 50   | 55     |
 
-Complete benchmarking results and details can be found here.
+Complete benchmarking results and details can be found [here](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/BENCHMARK.md).
 
 ## Supported Models
 
@@ -25,7 +25,7 @@ CuQwen natively supports the **Qwen2.5** model family across multiple parameter 
 * **Qwen2.5-3B** (`3b`)
 * **Qwen2.5-7B** (`7b`)
 
-Quantizied models and latest Qwen model series will also be supported in next releases 
+Quantizied models and latest Qwen model series (`Qwen 3.0`, `3.5`, `3.6`, `3.7` and `3.8`) will also be supported in next releases 
 
 ## Project Structure
 
@@ -127,5 +127,5 @@ The following enhancements are planned for future development cycles:
 
 ## Documentation
 
-* Benchmarking CuQwen: Contains the benchmarking details and results of CuQwen vs vLLM and Ollama
-* Optimization journey: Contains the complete journey of different optimizations that were used in the process of implementing CuQwen
+* [**Benchmarking CuQwen**](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/BENCHMARK.md): Contains the benchmarking details and results of CuQwen vs vLLM and Ollama
+* [**Optimization journey**](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/OPTIMIZATION_JOURNEY.md): Contains the complete journey of different optimizations that were used in the process of implementing CuQwen
