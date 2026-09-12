@@ -1,0 +1,9 @@
+# Binary files (weights/models)
+*.bin
+
+# JSON configuration and tokenizer files
+*.json
+
+# CMake build directories
+build/
+**/build/
