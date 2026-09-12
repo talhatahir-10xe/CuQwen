@@ -113,7 +113,7 @@ make -j$(nproc)
 cd ..
 ./build/cuqwen_benchmark
 ```
-The `benchmark/` directory also has the scripts for `vLLM` and `Ollama` which were used to benchmark those inference engines.
+The `benchmark/` directory also has the scripts for `vLLM` and `Ollama` which were used to benchmark those inference engines. To run these benchmarking scripts please reffer [here](https://github.com/talhatahir-10xe/CuQwen/blob/main/benchmark/README.md) 
 
 ## Roadmap & Future Work
 The following enhancements are planned for future development cycles:
