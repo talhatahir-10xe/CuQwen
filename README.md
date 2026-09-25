@@ -2,8 +2,6 @@
 
 ![CuQwen](/assets/CuQwen.jpeg)
 
-**`Note:` This is the current working branch for the next release in which I'm working on rediucing the inference speed decay rate for longer context window**
-
 CuQwen is a C++/CUDA inference engine written purely from scratch to explore the theoretical performance limits of single-user (```Batch Size 1```) autoregressive token generation using optimized custom CUDA kernels for open source Qwen models that can run on local edge devices for Nvidia GPUs.
 
 ## Performance
@@ -16,7 +14,7 @@ Average inference speed (tokens/second) for **Qwen2.5 Instruct model** across 32
 | 3b         |   113  | 101  | 106    |
 | 7b         |   55   | 48   | 54     |
 
-Complete benchmarking results and details can be found [here](https://github.com/talhatahir-10xe/CuQwen/blob/release1.1/docs/RELEASE_1.1_BENCHMARK.md).
+Complete benchmarking results and details can be found [here](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.1_BENCHMARK.md).
 
 ## Supported Models
 
@@ -115,7 +113,7 @@ make -j$(nproc)
 cd ..
 ./build/cuqwen_benchmark
 ```
-The `benchmark/` directory also has the scripts for `vLLM` and `Ollama` which were used to benchmark those inference engines. To run these benchmarking scripts please reffer [here](https://github.com/talhatahir-10xe/CuQwen/blob/release1.1/benchmark/README.md) 
+The `benchmark/` directory also has the scripts for `vLLM` and `Ollama` which were used to benchmark those inference engines. To run these benchmarking scripts please reffer [here](https://github.com/talhatahir-10xe/CuQwen/blob/main/benchmark/README.md) 
 
 ## Roadmap & Future Work
 The following enhancements are planned for future development cycles:
@@ -124,12 +122,12 @@ The following enhancements are planned for future development cycles:
 * **Weight Quantization:** Add low-precision INT8 and INT4 (W8A16/W4A16) quantization.
 * **KV-Cache Quantization:** Support INT8/FP8 KV-cache quantization to cut attention memory bandwidth usage during long-context generation.
 * **Modern Microarchitecture Tuning:** Extend custom kernel implementations for NVIDIA Hopper (`sm_90`) and Blackwell (`sm_100`) architectures utilizing `TMA` (Tensor Memory Accelerator), `DSMEM` (Distributed Shared memory) and `DPX` instructions.
-* **Long-Context Throughput Optimization:** Further mitigate throughput decay across extended sequence lengths. ✅ *Done in release 1.1 — throughput decay across the 32K context window was cut roughly in half; see the [Release 1.1 Optimization](https://github.com/talhatahir-10xe/CuQwen/blob/release1.1/docs/RELEASE_1.1_OPTIMIZATION.md) document.*
+* **Long-Context Throughput Optimization:** Further mitigate throughput decay across extended sequence lengths. ✅ *Done in release 1.1 — throughput decay across the 32K context window was cut roughly in half; see the [Release 1.1 Optimization](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.1_OPTIMIZATION.md) document.*
 * **Support for Newer Qwen Architecture Series:** Add native kernel and engine support for newer iterations in the Qwen family, including Qwen 3.0, Qwen 3.5, and Qwen 3.8 models.
 
 ## Documentation
 
-* [**Release 1.0 Benchmark**](https://github.com/talhatahir-10xe/CuQwen/blob/release1.1/docs/RELEASE_1.0_BENCHMARK.md): Benchmarking details and results of CuQwen 1.0 vs vLLM and Ollama
-* [**Release 1.0 Optimization Journey**](https://github.com/talhatahir-10xe/CuQwen/blob/release1.1/docs/RELEASE_1.0_OPTIMIZATION_JOURNEY.md): The complete journey of the different optimizations used in the process of implementing CuQwen 1.0
-* [**Release 1.1 Benchmark**](https://github.com/talhatahir-10xe/CuQwen/blob/release1.1/docs/RELEASE_1.1_BENCHMARK.md): Benchmarking details and results of CuQwen 1.1 vs vLLM and Ollama across the extended 32K context window
-* [**Release 1.1 Optimization**](https://github.com/talhatahir-10xe/CuQwen/blob/release1.1/docs/RELEASE_1.1_OPTIMIZATION.md): The long-context optimizations applied in CuQwen 1.1 to reduce throughput decay over CuQwen 1.0
+* [**Release 1.0 Benchmark**](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.0_BENCHMARK.md): Benchmarking details and results of CuQwen 1.0 vs vLLM and Ollama
+* [**Release 1.0 Optimization Journey**](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.0_OPTIMIZATION_JOURNEY.md): The complete journey of the different optimizations used in the process of implementing CuQwen 1.0
+* [**Release 1.1 Benchmark**](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.1_BENCHMARK.md): Benchmarking details and results of CuQwen 1.1 vs vLLM and Ollama across the extended 32K context window
+* [**Release 1.1 Optimization**](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.1_OPTIMIZATION.md): The long-context optimizations applied in CuQwen 1.1 to reduce throughput decay over CuQwen 1.0
