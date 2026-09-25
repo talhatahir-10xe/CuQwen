@@ -1,4 +1,4 @@
-# Optimization Journey: CuQwen
+# Optimization Journey: CuQwen 1.0
 
 Local LLM execution has recently emerged, driven by open-weights models and efficient quantization techniques (AWQ, GPTQ, GGUF) making it easier to run Large language models on edge devices.
 

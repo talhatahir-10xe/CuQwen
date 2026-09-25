@@ -110,4 +110,4 @@ $$\text{Decay Rate} = \frac{\text{Speed}_{1\text{k}} - \text{Speed}_{8\text{k}}}
 
 For full chart breakdowns, architectural visualizer comparisons, and trade-off analysis across all four model sizes (`0.5B`, `1.5B`, `3B`, `7B`), refer to the main documentation:
 
-👉 [**CuQwen Benchmark Strategy & Analysis (BENCHMARK.md)**](../docs/BENCHMARK.md)
+👉 [**CuQwen Benchmark Strategy & Analysis (RELEASE_1.1_BENCHMARK.md)**](../docs/RELEASE_1.1_BENCHMARK.md)

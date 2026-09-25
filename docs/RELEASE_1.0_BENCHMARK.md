@@ -1,4 +1,4 @@
-# CuQwen Benchmark Analysis
+# CuQwen 1.0 Benchmark Analysis
 
 This document details the benchmarking methodology, hardware configuration, and performance analysis comparing **CuQwen** against industry-standard inference frameworks (**vLLM** and **Ollama**).
 
