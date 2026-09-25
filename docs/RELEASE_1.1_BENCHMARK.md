@@ -2,7 +2,7 @@
 
 This document details the benchmarking methodology, hardware configuration, and performance analysis comparing **CuQwen 1.1** against industry-standard inference frameworks (**vLLM** and **Ollama**) across an extended long-context window.
 
-> For the details of the long-context optimizations that produced these results, see the [CuQwen 1.1 Optimization](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.1_OPTIMIZATION.md) document.
+> For the details of the long-context optimizations that produced these results, see the [CuQwen 1.1 Optimization](https://github.com/talhatahir-10xe/CuQwen/blob/release1.1/docs/RELEASE_1.1_OPTIMIZATION.md) document.
 
 ---
 
