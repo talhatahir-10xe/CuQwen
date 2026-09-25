@@ -28,7 +28,7 @@ struct QwenConfig {
     static constexpr int32_t n_heads           = 14;
     static constexpr int32_t n_kv_heads        = 2;
     static constexpr int32_t head_dim          = 64;
-    static constexpr int32_t max_seq_len       = 8192;
+    static constexpr int32_t max_seq_len       = 32768;
 
 #elif defined(QWEN_MODEL_1_5B)
     static constexpr const char* model_name = "1.5B";
@@ -40,7 +40,7 @@ struct QwenConfig {
     static constexpr int32_t n_heads           = 12;
     static constexpr int32_t n_kv_heads        = 2;
     static constexpr int32_t head_dim          = 128;
-    static constexpr int32_t max_seq_len       = 8192;
+    static constexpr int32_t max_seq_len       = 32768;
 
 #elif defined(QWEN_MODEL_3B)
     static constexpr const char* model_name = "3B";
@@ -52,7 +52,7 @@ struct QwenConfig {
     static constexpr int32_t n_heads           = 16;
     static constexpr int32_t n_kv_heads        = 2;
     static constexpr int32_t head_dim          = 128;
-    static constexpr int32_t max_seq_len       = 8192;
+    static constexpr int32_t max_seq_len       = 32768;
 
 #elif defined(QWEN_MODEL_7B)
     static constexpr const char* model_name = "7B";
@@ -64,7 +64,7 @@ struct QwenConfig {
     static constexpr int32_t n_heads           = 28;
     static constexpr int32_t n_kv_heads        = 4;
     static constexpr int32_t head_dim          = 128;
-    static constexpr int32_t max_seq_len       = 8192;
+    static constexpr int32_t max_seq_len       = 32768;
 
 #else
     #error "Model size preprocessor directive not set! Define QWEN_MODEL_0_5B, QWEN_MODEL_1_5B, QWEN_MODEL_3B, or QWEN_MODEL_7B."
@@ -74,5 +74,15 @@ struct QwenConfig {
     static constexpr float rope_theta          = 1000000.0f;
     static constexpr float repetition_penalty = 1.1f;
 };
+
+// Tuned for RTX 3090
+constexpr int ATTN_PARTITIONS = 64;
+constexpr int KSPLIT_WARPS    = 8;
+
+constexpr int ATTN_KEYS_CAP =
+    (((QwenConfig::max_seq_len + ATTN_PARTITIONS - 1) / ATTN_PARTITIONS) + 15) / 16 * 16;
+
+constexpr int GEMV_WARPS_PER_BLOCK = 8;
+constexpr int HEADS_PER_WARP = 4;
 
 #endif // CONFIG_H

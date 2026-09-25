@@ -34,7 +34,7 @@ int main() {
     std::cout << "[✔] Weights & GPU State Initialized Successfully.\n" << std::endl;
 
     // Dynamically scale total tokens to the model's context capacity
-    const int TOTAL_TOKENS = std::min(8000, QwenConfig::max_seq_len - 2);
+    const int TOTAL_TOKENS = std::min(32000, QwenConfig::max_seq_len - 2);
     const int INTERVAL_STEP = TOTAL_TOKENS >= 1000 ? 1000 : TOTAL_TOKENS / 4;
     
     // Generate pseudo-random token IDs within vocabulary range

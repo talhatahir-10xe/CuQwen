@@ -23,7 +23,6 @@ void malloc_qwen_state(const QwenConfig& config, QwenState& state) {
     CUDA_CHECK(cudaMalloc(&state.d_sampled_token, sizeof(int)));
     CUDA_CHECK(cudaMalloc(&state.d_history, config.max_seq_len * sizeof(int)));
 
-    // CUDA Graph Dynamic Inputs (Device Pointers)
     CUDA_CHECK(cudaMalloc(&state.d_token, sizeof(int)));
     CUDA_CHECK(cudaMalloc(&state.d_pos, sizeof(int)));
     CUDA_CHECK(cudaMalloc(&state.d_history_len, sizeof(int)));
@@ -33,15 +32,12 @@ void malloc_qwen_state(const QwenConfig& config, QwenState& state) {
     state.graph_exec = nullptr;
     state.graph_created = false;
 
-    // Head-Major KV Cache
     CUDA_CHECK(cudaMalloc(&state.key_cache, kv_cache_size * sizeof(half)));
     CUDA_CHECK(cudaMalloc(&state.value_cache, kv_cache_size * sizeof(half)));
     CUDA_CHECK(cudaMemset(state.key_cache, 0, kv_cache_size * sizeof(half)));
     CUDA_CHECK(cudaMemset(state.value_cache, 0, kv_cache_size * sizeof(half)));
 
-    // FlashDecoding Work Buffers Allocation
-    const size_t max_splits = (config.max_seq_len + 255) / 256;
-    const size_t required_splits = config.n_heads * max_splits;
+    const size_t required_splits = (size_t)config.n_kv_heads * PARTIAL_HEAD_SLOTS * ATTN_PARTITIONS;
     CUDA_CHECK(cudaMalloc(&state.d_partial_out, required_splits * config.head_dim * sizeof(float)));
     CUDA_CHECK(cudaMalloc(&state.d_partial_max, required_splits * sizeof(float)));
     CUDA_CHECK(cudaMalloc(&state.d_partial_sum, required_splits * sizeof(float)));
@@ -95,8 +91,13 @@ static void qwen_forward_graph_body(
     for (int l = 0; l < config.n_layers; ++l) {
         const LayerWeights& lw = weights.layers[l];
 
+        launch_rmsnorm(
+            state.x, lw.input_layernorm_weight, state.att,
+            dim, config.norm_eps, stream
+        );
+
         launch_fused_attn_block(
-            state.x,
+            state.att,
             lw.input_layernorm_weight,
             lw.q_proj_weight, lw.k_proj_weight, lw.v_proj_weight,
             lw.q_proj_bias, lw.k_proj_bias, lw.v_proj_bias,
@@ -107,7 +108,6 @@ static void qwen_forward_graph_body(
             stream
         );
 
-        // Compute Head-Major KV Layer Offset
         size_t layer_kv_offset = (size_t)l * n_kv * config.max_seq_len * head_dim;
         half* layer_k_cache = state.key_cache + layer_kv_offset;
         half* layer_v_cache = state.value_cache + layer_kv_offset;
@@ -118,7 +118,6 @@ static void qwen_forward_graph_body(
             state.d_pos, n_kv, config.max_seq_len, head_dim, stream
         );
 
-        // Call 2-Stage FlashDecoding
         launch_gqa_attention_decode(
             state.q, layer_k_cache, layer_v_cache, state.xb,
             state.d_pos, config.n_heads, config.n_kv_heads, head_dim,
@@ -128,8 +127,13 @@ static void qwen_forward_graph_body(
 
         launch_gemv_add_fp16(lw.o_proj_weight, state.xb, state.x, dim, q_dim, stream);
 
+        launch_rmsnorm(
+            state.x, lw.post_attention_layernorm_weight, state.att,
+            dim, config.norm_eps, stream
+        );
+
         launch_fused_mlp_stage1(
-            state.x,
+            state.att,
             lw.post_attention_layernorm_weight,
             lw.gate_proj_weight,
             lw.up_proj_weight,
@@ -147,25 +151,21 @@ static void qwen_forward_graph_body(
         );
     }
 
-    // STEP 1: RMSNorm Computation
     launch_rmsnorm(
         state.x, weights.norm_weight, state.xb,
         dim, config.norm_eps, stream
     );
 
-    // STEP 2: Logits GEMV Computation
     launch_compute_logits(
         state.xb, weights.lm_head_weight, state.logits,
         config.vocab_size, dim, stream
     );
 
-    // Repetition penalty
     launch_apply_repetition_penalty(
         state.logits, state.d_history, state.d_history_len,
         config.vocab_size, config.repetition_penalty, stream
     );
 
-    // Argmax sampling
     launch_argmax(state.logits, state.d_sampled_token, config.vocab_size, stream);
 }
 
@@ -190,16 +190,13 @@ int qwen_forward(
     }
 
     if (!state.graph_created) {
-        // Warmup forward pass before stream capture
         qwen_forward_graph_body(config, state, weights, exec_stream);
         CUDA_CHECK(cudaStreamSynchronize(exec_stream));
 
-        // Stream capture graph construction
         CUDA_CHECK(cudaStreamBeginCapture(exec_stream, cudaStreamCaptureModeGlobal));
         qwen_forward_graph_body(config, state, weights, exec_stream);
         CUDA_CHECK(cudaStreamEndCapture(exec_stream, &state.graph));
 
-        // Instantiate CUDA Graph executable
         CUDA_CHECK(cudaGraphInstantiate(&state.graph_exec, state.graph, NULL, NULL, 0));
         state.graph_created = true;
     }

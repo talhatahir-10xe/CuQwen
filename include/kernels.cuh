@@ -4,6 +4,15 @@
 #include <cuda_fp16.h>
 #include <cuda_fp16.hpp>
 #include "config.h"
+// ATTN_PARTITIONS and HEADS_PER_WARP tuning parameters live in config.h.
+
+// Head slots reserved per KV-head in the FlashDecoding partial buffers. It is
+// >= any supported kv_group (n_heads/n_kv_heads) and equals the 16-row WMMA
+// fragment height, so the tensor-core stage-1 can store its O fragments (16
+// rows: kv_group real query heads + padding) straight to global memory with no
+// shared-memory round-trip. Partial index for (kv_head, local head) is
+// (kv_head*PARTIAL_HEAD_SLOTS + local_head)*ATTN_PARTITIONS + partition.
+constexpr int PARTIAL_HEAD_SLOTS = 16;
 
 
 void launch_embedding_lookup(const half* embed_table, const int* d_token_id, half* output, int dim, cudaStream_t stream = 0);

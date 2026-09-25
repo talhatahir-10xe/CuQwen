@@ -19,7 +19,7 @@ To evaluate bare-metal performance, CuQwen was tested in a head-to-head comparis
 ## Benchmark Analysis
 
 ### 1. Throughput vs. Context Length (Context Decay)
-![Context Window Decay](../assets/01_context_decay.png)
+![Context Window Decay](../assets/Release1.0_Benchmark/01_context_decay.png)
 
 * **Small Sequence Advantage:** CuQwen starts significantly faster than vLLM and Ollama in early context slices.
 * **Sustained Lead:** Across all four model scales (`0.5B`, `1.5B`, `3B`, and `7B`), CuQwen maintains the highest generation speed through short-to-medium sequence lengths.
@@ -27,7 +27,7 @@ To evaluate bare-metal performance, CuQwen was tested in a head-to-head comparis
 ---
 
 ### 2. Average Throughput Across 8k Window
-![Average Throughput](../assets/02_average_throughput.png)
+![Average Throughput](../assets/Release1.0_Benchmark/02_average_throughput.png)
 
 * **Raw Generation Efficiency:** CuQwen achieves higher average throughput across the entire 8k window on all model sizes.
 * **Bandwidth Saturation:** On larger scales (`3B` and `7B`), CuQwen consistently operates near the physical memory bandwidth limits of the GPU, maintaining a baseline lead over Ollama and vLLM.
@@ -35,7 +35,7 @@ To evaluate bare-metal performance, CuQwen was tested in a head-to-head comparis
 ---
 
 ### 3. Average Speedup Advantage
-![CuQwen Speedup Advantage](../assets/03_speedup_vs_all.png)
+![CuQwen Speedup Advantage](../assets/Release1.0_Benchmark/03_speedup_vs_all.png)
 
 * **Pronounced Low-Parameter Dominance:** CuQwen delivers its largest relative speedups on smaller model sizes (`0.5B` and `1.5B`) over Ollama.
 * **Consistent Gain Over vLLM:** Across both small and large model sizes, CuQwen maintains a clear performance margin over vLLM, demonstrating the efficiency of specialized single-batch kernels.
@@ -43,7 +43,7 @@ To evaluate bare-metal performance, CuQwen was tested in a head-to-head comparis
 ---
 
 ### 4. Performance Decay Rate (1k → 8k Window)
-![Throughput Decay Rate](../assets/04_throughput_decay_rate.png)
+![Throughput Decay Rate](../assets/Release1.0_Benchmark/04_throughput_decay_rate.png)
 
 * **Steeper Context Degradation:** CuQwen exhibits a higher throughput decay rate from 1k to 8k tokens compared to vLLM across almost all model scales, as context length expansion increases memory access overhead in the decode phase.
 * **Outlier Behavior at Scale:** Ollama suffers an unusually sharp performance drop on the `1.5B` model, whereas CuQwen maintains a predictable, steady decay slope across all tested parameter counts.

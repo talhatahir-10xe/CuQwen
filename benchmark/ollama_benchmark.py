@@ -14,9 +14,9 @@ MODEL_MAP = {
     "7b":   "qwen2.5:7b-fp16",
 }
 
-TOTAL_TOKENS  = 8000
+TOTAL_TOKENS  = 32000
 INTERVAL_STEP = 1000
-WARMUP_TOKENS = 100   # Quick 10-token warmup
+WARMUP_TOKENS = 500
 
 class BenchmarkInterval:
     def __init__(self, start_token: int, end_token: int, duration_ms: float, tok_per_sec: float):
@@ -149,7 +149,7 @@ async def run_benchmark(model_id: str):
         print(f"  • Server Pure Eval Speed   : {server_tok_sec:.2f} tok/s (Ollama Internal Metric)")
     print(f"  • Average Speed (Streaming): {avg_tok_sec:.2f} tok/s")
     print(f"  • Initial Speed (0-1k)     : {initial_speed:.2f} tok/s")
-    print(f"  • Final Speed (7k-8k)      : {final_speed:.2f} tok/s")
+    print(f"  • Final Speed (31k-32k)      : {final_speed:.2f} tok/s")
     print(f"  • Speed Decay Rate         : {decay_rate:.2f} %")
     print("========================================================================\n")
 

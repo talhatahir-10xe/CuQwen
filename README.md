@@ -2,19 +2,19 @@
 
 ![CuQwen](/assets/CuQwen.jpeg)
 
-**`Note:` This is the current working branch for the next release in which I'm working on rediucing the inference speed decay rate for longer context and addding 8-bit and 4-bit weights only quantization (W4A16, W8A16)**
+**`Note:` This is the current working branch for the next release in which I'm working on rediucing the inference speed decay rate for longer context window**
 
 CuQwen is a C++/CUDA inference engine written purely from scratch to explore the theoretical performance limits of single-user (```Batch Size 1```) autoregressive token generation using optimized custom CUDA kernels for open source Qwen models that can run on local edge devices for Nvidia GPUs.
 
 ## Performance
-Average inference speed (tokens/second) for **Qwen2.5 Instruct model** across 8K context window on RTX 3090 
+Average inference speed (tokens/second) for **Qwen2.5 Instruct model** across 32K context window on RTX 3090 
 
 | Model Size | CuQwen | vLLM | Ollama |
 | ---------- | ------ | ---- | ------ |
-| 0.5b       |   490  | 471  | 371    |
-| 1.5b       |   212  | 191  | 160    |
-| 3b         |   114  | 109  | 112    |
-| 7b         |   57   | 50   | 55     |
+| 0.5b       |   462  | 398  | 355    |
+| 1.5b       |   203  | 172  | 139    |
+| 3b         |   113  | 101  | 106    |
+| 7b         |   55   | 48   | 54     |
 
 Complete benchmarking results and details can be found [here](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/BENCHMARK.md).
 

@@ -28,7 +28,7 @@ Before writing custom CUDA kernels, mapping the exact data movement through GPU 
 
 Each generated token takes a single round-trip through five stages. The input token ID is resolved to a dense vector via an embedding lookup, then passed through a stack of 28 identical transformer layers that progressively refine its representation. A final RMSNorm stabilizes the output before an LM head GEMV projects it into vocabulary logits, and an ArgMax (or repetition-penalized sampling) selects the next token ID. At batch size 1, this entire forward pass runs sequentially for every token.
 
-![CuQwen High-Level Pipeline](../assets/cuqwen_high_level_pipeline.jpeg)
+![CuQwen High-Level Pipeline](../assets/Release1.0_OptimiztionJourney/cuqwen_high_level_pipeline.jpeg)
 
 ### 2. Single Transformer Layer Detail
 
@@ -39,7 +39,7 @@ Each of the 28 transformer layers runs two sub-blocks in sequence, connected by 
 
 Both sub-blocks skip-connect directly back to their respective layer inputs via residual connections.
 
-![CuQwen High-Level Pipeline](../assets/cuqwen_transformer_block.jpeg)
+![CuQwen High-Level Pipeline](../assets/Release1.0_OptimiztionJourney/cuqwen_transformer_block.jpeg)
 
 ## Phase 1: The cuBLAS Baseline
 
@@ -60,7 +60,7 @@ All non-GEMV operations are implemented using basic custom CUDA kernels:
 
 ### Baseline Performance & Benchmarks
 
-![CuQwen High-Level Pipeline](../assets/phase1.png)
+![CuQwen High-Level Pipeline](../assets/Release1.0_OptimiztionJourney/phase1.png)
 
 CuQwen was benchmarked against HuggingFace Transformers (FP16, PyTorch) on the RTX 2070 by generating 8,000 continuous tokens and recording throughput in 1,000-token context intervals.
 
@@ -99,7 +99,7 @@ This design reduced kernel launches from **17 per layer to 5** (in transformer b
 
 ### Benchmark Results
 
-![CuQwen High-Level Pipeline](../assets/phase2.png)
+![CuQwen High-Level Pipeline](../assets/Release1.0_OptimiztionJourney/phase2.png)
 
 * **1k Context Throughput:** Drops from **41.96 tok/s** (Phase 1) to **26.08 tok/s** (Phase 2).
 * **8k Context Throughput:** Drops from **19.68 tok/s** (Phase 1) to **14.79 tok/s** (Phase 2).
@@ -128,7 +128,7 @@ To push execution closer to the RTX 2070's theoretical peak memory bandwidth (44
 
 ### Benchmark Results
 
-![CuQwen High-Level Pipeline](../assets/phase3.png)
+![CuQwen High-Level Pipeline](../assets/Release1.0_OptimiztionJourney/phase3.png)
 
 Optimizing memory access patterns yielded massive performance gains across all context lengths:
 
@@ -147,7 +147,7 @@ With global VRAM bandwidth bottlenecks resolved via 128-bit memory vectorization
 
 ### Benchmark Results
 
-![CuQwen High-Level Pipeline](../assets/phase4.png)
+![CuQwen High-Level Pipeline](../assets/Release1.0_OptimiztionJourney/phase4.png)
 
 Optimizing intra-warp synchronization and instruction pipelining yielded significant throughput improvements across all sequence lengths:
 
@@ -181,7 +181,7 @@ To resolve context scaling degradation, the VRAM cache layout was restructured a
 
 ### Benchmark Results
 
-![CuQwen High-Level Pipeline](../assets/phase5.png)
+![CuQwen High-Level Pipeline](../assets/Release1.0_OptimiztionJourney/phase5.png)
 
 FlashDecode and head-major cache indexing flattened the long-context performance decay curve:
 
@@ -199,7 +199,7 @@ Given the theoretical RTX 2070 ceiling of **149.33 tok/s**, Phase 6 investigates
 
 ### Profiling with Nsight Systems
 
-![CuQwen High-Level Pipeline](../assets/nsight_systems.png)
+![CuQwen High-Level Pipeline](../assets/Release1.0_OptimiztionJourney/nsight_systems.png)
 
 Nsight Systems was executed across a full 8,000-token generation run to profile GPU execution time breakdown across kernels:
 
@@ -218,15 +218,15 @@ Nsight Compute analysis revealed key memory and compute pipeline bottlenecks:
 
 * **`fused_mlp_stage1` (68% DRAM Throughput, 54% Compute Throughput):** The kernel was memory-bound due to redundant data accesses. The input vector $x$ (1,536 elements) was loaded twice: once during the RMSNorm sum-of-squares pass and once during the dual gate/up GEMV projection. Additionally, reduction logic executed two sequential warp-reduction loops for gate and up accumulators rather than a unified pass.
 
-![CuQwen High-Level Pipeline](../assets/ncu_mlp_stage1.png)
+![CuQwen High-Level Pipeline](../assets/Release1.0_OptimiztionJourney/ncu_mlp_stage1.png)
 
 * **`fused_mlp_stage2` (83% DRAM Throughput, 20% Compute Throughput):** Suffered severe memory pipeline stalls. `intermediate_in` (8,960 FP16 values, ~17.5 KB) was loaded independently by all 1,536 output-row blocks, resulting in redundant global memory fetches without cross-block data reuse.
 
-![CuQwen High-Level Pipeline](../assets/ncu_mlp_stage2.png)
+![CuQwen High-Level Pipeline](../assets/Release1.0_OptimiztionJourney/ncu_mlp_stage2.png)
 
 * **`compute_logits` (73% DRAM Throughput, 42% Compute Throughput):** `x_normed` (1,536 FP16 values, ~3 KB) was loaded independently by 151,936 vocabulary output blocks, leading to low arithmetic intensity relative to global memory traffic.
 
-![CuQwen High-Level Pipeline](../assets/ncu_compute_logits.png)
+![CuQwen High-Level Pipeline](../assets/Release1.0_OptimiztionJourney/ncu_compute_logits.png)
 
 ### Targeted Optimizations: Row Tiling & Single-Pass Reductions
 
@@ -239,7 +239,7 @@ To eliminate redundant global memory reads and improve arithmetic intensity, the
 
 ### Benchmark Results
 
-![CuQwen High-Level Pipeline](../assets/phase6.png)
+![CuQwen High-Level Pipeline](../assets/Release1.0_OptimiztionJourney/phase6.png)
 
 Row tiling and reduction optimizations delivered consistent performance gains across all context lengths:
 
@@ -255,7 +255,7 @@ After Phase 6 eliminated memory stalling within individual kernels, execution bo
 
 ### The Bottleneck: Host CPU Launch Latency
 
-![CuQwen High-Level Pipeline](../assets/nysy_kernel_launch_overhead.png)
+![CuQwen High-Level Pipeline](../assets/Release1.0_OptimiztionJourney/nysy_kernel_launch_overhead.png)
 
 In Phase 6, generating 8,000 tokens required issuing individual CUDA kernel launches layer-by-layer on every decode iteration:
 
@@ -276,14 +276,14 @@ This design enables the GPU to execute the pre-configured workflow directly from
 
 #### Launch Overhead Reduction
 
-![CuQwen High-Level Pipeline](../assets/nsys_cudagraphs.png)
+![CuQwen High-Level Pipeline](../assets/Release1.0_OptimiztionJourney/nsys_cudagraphs.png)
 
 * **Kernel Dispatch Calls:** Dropped from **1,608,199** to **8,001** `cudaGraphLaunch` calls (1 call per generated token).
 * **Launch Management Overhead:** Decreased from **5.13 seconds** to **0.56 seconds**—eliminating **>89%** of host launch latency.
 
 ### Benchmark Results
 
-![CuQwen High-Level Pipeline](../assets/phase7.png)
+![CuQwen High-Level Pipeline](../assets/Release1.0_OptimiztionJourney/phase7.png)
 
 Removing host CPU dispatch bottlenecks provided clean throughput gains across all context lengths:
 
@@ -306,4 +306,4 @@ Across all seven phases, key architectural shifts drove these performance jumps:
 * **Phase 6 (Row Tiling & Texture Caching):** Re-architected MLP and logit kernels to compute multiple output rows per block, dramatically increasing arithmetic intensity per byte loaded.
 * **Phase 7 (CUDA Graph Execution):** Eliminated host CPU dispatch latency, reducing over 1.6 million runtime `cudaLaunchKernel` calls down to single-replay graph launches per generated token.
 
-![CuQwen High-Level Pipeline](../assets/cuqwen_average_throughput_progression.png)
+![CuQwen High-Level Pipeline](../assets/Release1.0_OptimiztionJourney/cuqwen_average_throughput_progression.png)

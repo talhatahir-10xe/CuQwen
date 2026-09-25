@@ -2,7 +2,7 @@
 
 This directory contains the benchmarker applications and evaluation scripts used to compare **CuQwen** against production LLM inference frameworks (**vLLM** and **Ollama**).
 
-The benchmark measures bare-metal, single-user (`Batch Size 1`) autoregressive decode speed across an **8k context window** sampled in **1k slice increments**.
+The benchmark measures bare-metal, single-user (`Batch Size 1`) autoregressive decode speed across a **32k context window** sampled in **1k slice increments**.
 
 ## Directory Overview
 
@@ -17,7 +17,7 @@ CuQwen/benchmark/
 
 ## Benchmark Prerequisites & Environment Setup
 
-All benchmarking requires an NVIDIA GPU with sufficient VRAM (e.g., NVIDIA RTX 3090/4090 for 7B models at full FP16 precision with an 8k KV cache).
+All benchmarking requires an NVIDIA GPU with sufficient VRAM (e.g., 20GB VRAM card for 7B models at full FP16 precision with an 32k KV cache).
 
 ### 1. CuQwen Benchmark Setup
 
@@ -98,9 +98,9 @@ python3 ollama_benchmark.py --model=1.5b
 
 All three framework runners record and report identical metric parameters to allow direct head-to-head comparisons:
 
-* **Token Slice Throughput (tok/s):** Measured speed across each 1,000-token context chunk ($0\rightarrow1\text{k}, 1\text{k}\rightarrow2\text{k}, \dots, 7\text{k}\rightarrow8\text{k}$).
-* **Average Speed (tok/s):** Mean generation speed across the entire 8k context window.
-* **Speed Decay Rate (%):** Percentage drop in throughput from the initial 1k slice to the final 8k slice:
+* **Token Slice Throughput (tok/s):** Measured speed across each 1,000-token context chunk ($0\rightarrow1\text{k}, 1\text{k}\rightarrow2\text{k}, \dots, 7\text{k}\rightarrow32\text{k}$).
+* **Average Speed (tok/s):** Mean generation speed across the entire 32k context window.
+* **Speed Decay Rate (%):** Percentage drop in throughput from the initial 1k slice to the final 32k slice:
 
 $$\text{Decay Rate} = \frac{\text{Speed}_{1\text{k}} - \text{Speed}_{8\text{k}}}{\text{Speed}_{1\text{k}}} \times 100$$
 

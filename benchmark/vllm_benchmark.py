@@ -15,9 +15,9 @@ MODEL_MAP = {
     "7b":   "Qwen/Qwen2.5-7B-Instruct",
 }
 
-TOTAL_TOKENS  = 8000
+TOTAL_TOKENS  = 32000
 INTERVAL_STEP = 1000
-WARMUP_TOKENS = 100
+WARMUP_TOKENS = 500
 VOCAB_SIZE    = 151936
 
 class BenchmarkInterval:
@@ -122,7 +122,7 @@ async def run_benchmark(model_id: str):
     print(f"  • Total Time Elapsed       : {total_wall_sec:.2f} seconds")
     print(f"  • Average Speed            : {avg_tok_sec:.2f} tok/s")
     print(f"  • Initial Speed (0-1k)     : {initial_speed:.2f} tok/s")
-    print(f"  • Final Speed (7k-8k)      : {final_speed:.2f} tok/s")
+    print(f"  • Final Speed (31k-32k)      : {final_speed:.2f} tok/s")
     print(f"  • Speed Decay Rate         : {decay_rate:.2f} %")
     print("========================================================================\n")
 
