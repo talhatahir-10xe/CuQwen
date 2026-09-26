@@ -4,6 +4,25 @@
 #include <iostream>
 #include <cstdint>
 #include <cuda_runtime.h>
+#include <cuda_fp16.h>
+
+// ---------------------------------------------------------------------------
+// Weight quantization mode (selected at compile time via -Dquant=<fp16|int8>).
+// INT8 is weights-only (W8A16): the linear-projection weights are stored as
+// INT8 + per-group FP16 scales and dequantized to FP16 inside the kernels.
+// Embeddings/LM head, RMSNorm weights and biases always remain FP16.
+// ---------------------------------------------------------------------------
+constexpr int QUANT_GROUP_SIZE = 128;   // weights sharing one scale (along input dim)
+
+#ifdef QUANT_INT8
+using qweight_t = int8_t;               // storage type of quantized weight matrices
+#define QUANT_TAG "int8"
+#define QUANT_TYPE_ID 1
+#else
+using qweight_t = half;                 // FP16 build: weights stored directly as half
+#define QUANT_TAG "fp16"
+#define QUANT_TYPE_ID 0
+#endif
 
 #define CUDA_CHECK(call) \
     do { \
@@ -20,7 +39,7 @@ struct QwenConfig {
 
 #if defined(QWEN_MODEL_0_5B)
     static constexpr const char* model_name = "0.5B";
-    static constexpr const char* bin_path   = "weights/model_fp16_0_5b.bin";
+    #define MODEL_TAG "0_5b"
     static constexpr int32_t vocab_size        = 151936;
     static constexpr int32_t dim               = 896;
     static constexpr int32_t intermediate_size = 4864;
@@ -32,7 +51,7 @@ struct QwenConfig {
 
 #elif defined(QWEN_MODEL_1_5B)
     static constexpr const char* model_name = "1.5B";
-    static constexpr const char* bin_path   = "weights/model_fp16_1_5b.bin";
+    #define MODEL_TAG "1_5b"
     static constexpr int32_t vocab_size        = 151936;
     static constexpr int32_t dim               = 1536;
     static constexpr int32_t intermediate_size = 8960;
@@ -44,7 +63,7 @@ struct QwenConfig {
 
 #elif defined(QWEN_MODEL_3B)
     static constexpr const char* model_name = "3B";
-    static constexpr const char* bin_path   = "weights/model_fp16_3b.bin";
+    #define MODEL_TAG "3b"
     static constexpr int32_t vocab_size        = 151936;
     static constexpr int32_t dim               = 2048;
     static constexpr int32_t intermediate_size = 11008;
@@ -56,7 +75,7 @@ struct QwenConfig {
 
 #elif defined(QWEN_MODEL_7B)
     static constexpr const char* model_name = "7B";
-    static constexpr const char* bin_path   = "weights/model_fp16_7b.bin";
+    #define MODEL_TAG "7b"
     static constexpr int32_t vocab_size        = 152064;
     static constexpr int32_t dim               = 3584;
     static constexpr int32_t intermediate_size = 18944;
@@ -69,6 +88,11 @@ struct QwenConfig {
 #else
     #error "Model size preprocessor directive not set! Define QWEN_MODEL_0_5B, QWEN_MODEL_1_5B, QWEN_MODEL_3B, or QWEN_MODEL_7B."
 #endif
+
+    // Binary path and quant tag are composed from the model + quantization mode,
+    // e.g. "weights/model_int8_3b.bin". (Adjacent string literals concatenate.)
+    static constexpr const char* bin_path   = "weights/model_" QUANT_TAG "_" MODEL_TAG ".bin";
+    static constexpr int32_t quant_type     = QUANT_TYPE_ID;
 
     static constexpr float norm_eps           = 1e-6f;
     static constexpr float rope_theta          = 1000000.0f;

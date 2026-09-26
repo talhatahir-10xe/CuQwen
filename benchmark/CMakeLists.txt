@@ -29,6 +29,20 @@ else()
     message(FATAL_ERROR "Invalid model option '${model}'. Options are: 0.5b, 1.5b, 3b, 7b")
 endif()
 
+# 1b. Optional Input: -Dquant=<fp16|int8>  (default: fp16). Must match the mode
+#     used by export_weights.py, since the benchmark shares ../src and ../include.
+if(NOT DEFINED quant)
+    set(quant "fp16")
+endif()
+
+string(TOLOWER "${quant}" QUANT_MODE)
+
+if(QUANT_MODE STREQUAL "int8")
+    add_compile_definitions(QUANT_INT8)
+elseif(NOT QUANT_MODE STREQUAL "fp16")
+    message(FATAL_ERROR "Invalid quant option '${quant}'. Options are: fp16, int8")
+endif()
+
 # 2. Check if gpu_arch is provided
 if(NOT DEFINED gpu_arch)
     message(FATAL_ERROR 

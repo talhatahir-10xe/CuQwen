@@ -20,6 +20,11 @@ WEIGHTS_DIR     = "weights"
 OUTPUT_BPE_PATH = os.path.join(WEIGHTS_DIR, "qwen25_bpe_ranks.json")
 MAGIC_NUMBER    = 0x5157454E   # ASCII "QWEN"
 
+# Quantization type tags written into the binary header (must match config.h)
+QUANT_FP16      = 0
+QUANT_INT8      = 1
+QUANT_GROUP     = 128          # weights per scale (grouped along the input/contraction dim)
+
 def print_header(title: str):
     print(f"\n╔═{'═' * 76}═╗")
     print(f"║ {title.center(76)} ║")
@@ -112,9 +117,55 @@ def write_fp16(file_obj, arr: np.ndarray) -> int:
     return len(data)
 
 
-def export_weights(model_dir: str, model_size: str):
+def quantize_int8_groupwise(arr: np.ndarray, group: int = QUANT_GROUP):
+    """Symmetric per-group INT8 quantization along the input (contraction) dim.
+
+    `arr` is a 2D weight matrix [out_features, in_features]. Each row is split
+    into groups of `group` consecutive elements; every group gets one FP16 scale
+    (= max(|w|) / 127). Returns (int8_weights [out, in], fp16_scales [out, in/group]).
+    """
+    arr = arr.astype(np.float32)
+    out_features, in_features = arr.shape
+    assert in_features % group == 0, (
+        f"in_features={in_features} not divisible by group size {group}"
+    )
+    n_groups = in_features // group
+
+    grouped = arr.reshape(out_features, n_groups, group)
+    # Per-group max-abs; guard all-zero groups so we never divide by zero.
+    max_abs = np.max(np.abs(grouped), axis=2)
+    scales = max_abs / 127.0
+    safe_scales = np.where(scales > 0.0, scales, 1.0)
+
+    q = np.round(grouped / safe_scales[:, :, None])
+    q = np.clip(q, -127, 127).astype(np.int8)
+
+    return q.reshape(out_features, in_features), scales.astype(np.float16)
+
+
+def write_int8(file_obj, arr: np.ndarray, group: int = QUANT_GROUP) -> int:
+    """Serialize a weight matrix as [INT8 weights][FP16 group scales]."""
+    if arr.ndim != 2:
+        raise ValueError(f"INT8 export expects a 2D weight matrix, got shape {arr.shape}")
+    q, scales = quantize_int8_groupwise(arr, group)
+    w_bytes = q.tobytes()
+    s_bytes = scales.astype(np.float16).tobytes()
+    file_obj.write(w_bytes)
+    file_obj.write(s_bytes)
+    return len(w_bytes) + len(s_bytes)
+
+
+def export_weights(model_dir: str, model_size: str, quant: str = "fp16"):
     os.makedirs(WEIGHTS_DIR, exist_ok=True)
-    out_bin_path = os.path.join(WEIGHTS_DIR, f"model_fp16_{model_size.replace('.', '_')}.bin")
+    quant_tag  = "int8" if quant == "int8" else "fp16"
+    quant_type = QUANT_INT8 if quant == "int8" else QUANT_FP16
+    is_int8    = (quant == "int8")
+    out_bin_path = os.path.join(WEIGHTS_DIR, f"model_{quant_tag}_{model_size.replace('.', '_')}.bin")
+
+    # For INT8 builds, the linear-projection weights are quantized; everything
+    # else (embeddings/LM head, RMSNorm weights, biases) stays FP16.
+    def write_proj(f, arr):
+        return write_int8(f, arr) if is_int8 else write_fp16(f, arr)
 
     cfg = read_config(model_dir)
     vocab_size          = cfg["vocab_size"]
@@ -137,20 +188,25 @@ def export_weights(model_dir: str, model_size: str):
     print(f"  │ • Head Dim:         {head_dim}")
     print(f"  │ • Max Seq Len:      {max_seq_len:,}")
     print(f"  │ • Tied Embeddings:  {bool(tie_word_embeddings)}")
-    print(f"  │ • Precision:        FP16")
+    if is_int8:
+        print(f"  │ • Precision:        INT8 weights-only (W8A16), group={QUANT_GROUP}")
+        print(f"  │ • FP16 retained:    embeddings/LM head, RMSNorm weights, biases")
+    else:
+        print(f"  │ • Precision:        FP16")
     print(f"  │ • Output Path:      {out_bin_path}")
 
     reader = MultiShardSafetensors(model_dir)
 
-    print_section("3. Serializing FP16 Binary Weights")
+    print_section(f"3. Serializing {'INT8' if is_int8 else 'FP16'} Binary Weights")
     total_bytes = 0
 
     with open(out_bin_path, "wb") as f:
         # Header (256 bytes)
         header = struct.pack(
-            "iiiiiiiii",
+            "iiiiiiiiii",
             MAGIC_NUMBER, vocab_size, dim, intermediate_size,
             n_layers, n_heads, n_kv_heads, head_dim, max_seq_len,
+            quant_type,
         )
 
         f.write(header)
@@ -168,22 +224,22 @@ def export_weights(model_dir: str, model_size: str):
 
             total_bytes += write_fp16(f, reader.get_tensor(f"{p}.input_layernorm.weight"))
 
-            total_bytes += write_fp16(f, reader.get_tensor(f"{p}.self_attn.q_proj.weight"))
+            total_bytes += write_proj(f, reader.get_tensor(f"{p}.self_attn.q_proj.weight"))
             total_bytes += write_fp16(f, reader.get_tensor(f"{p}.self_attn.q_proj.bias"))
 
-            total_bytes += write_fp16(f, reader.get_tensor(f"{p}.self_attn.k_proj.weight"))
+            total_bytes += write_proj(f, reader.get_tensor(f"{p}.self_attn.k_proj.weight"))
             total_bytes += write_fp16(f, reader.get_tensor(f"{p}.self_attn.k_proj.bias"))
 
-            total_bytes += write_fp16(f, reader.get_tensor(f"{p}.self_attn.v_proj.weight"))
+            total_bytes += write_proj(f, reader.get_tensor(f"{p}.self_attn.v_proj.weight"))
             total_bytes += write_fp16(f, reader.get_tensor(f"{p}.self_attn.v_proj.bias"))
 
-            total_bytes += write_fp16(f, reader.get_tensor(f"{p}.self_attn.o_proj.weight"))
+            total_bytes += write_proj(f, reader.get_tensor(f"{p}.self_attn.o_proj.weight"))
 
             total_bytes += write_fp16(f, reader.get_tensor(f"{p}.post_attention_layernorm.weight"))
 
-            total_bytes += write_fp16(f, reader.get_tensor(f"{p}.mlp.gate_proj.weight"))
-            total_bytes += write_fp16(f, reader.get_tensor(f"{p}.mlp.up_proj.weight"))
-            total_bytes += write_fp16(f, reader.get_tensor(f"{p}.mlp.down_proj.weight"))
+            total_bytes += write_proj(f, reader.get_tensor(f"{p}.mlp.gate_proj.weight"))
+            total_bytes += write_proj(f, reader.get_tensor(f"{p}.mlp.up_proj.weight"))
+            total_bytes += write_proj(f, reader.get_tensor(f"{p}.mlp.down_proj.weight"))
 
         print()
 
@@ -248,21 +304,23 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Export Qwen 2.5 PyTorch/Safetensors weights and tokenizer to binary format.")
     parser.add_argument("--model", type=str, required=True, choices=["0.5b", "1.5b", "3b", "7b"],
                         help="Model size variant to export (0.5b, 1.5b, 3b, 7b)")
+    parser.add_argument("--quantization", type=str, default="fp16", choices=["fp16", "int8"],
+                        help="Weight precision: 'fp16' (default) or 'int8' (weights-only W8A16)")
 
     if len(sys.argv) == 1:
         parser.print_help()
         print("\nExample commands:")
         print("  python3 export_weights.py --model=0.5b")
-        print("  python3 export_weights.py --model=1.5b")
-        print("  python3 export_weights.py --model=3b")
+        print("  python3 export_weights.py --model=1.5b --quantization=int8")
+        print("  python3 export_weights.py --model=3b  --quantization=int8")
         print("  python3 export_weights.py --model=7b")
         sys.exit(1)
 
     args = parser.parse_args()
 
-    print_header("CUQWEN: FP16 WEIGHT & TOKENIZER EXPORTER")
+    print_header(f"CUQWEN: {args.quantization.upper()} WEIGHT & TOKENIZER EXPORTER")
     repo_id = MODEL_MAP[args.model]
     model_dir = download_model(repo_id)
-    export_weights(model_dir, args.model)
+    export_weights(model_dir, args.model, args.quantization)
     export_tokenizer(model_dir)
     print_header("ALL EXPORTS COMPLETED SUCCESSFULLY")

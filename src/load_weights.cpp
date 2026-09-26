@@ -18,6 +18,15 @@ static T* alloc_gpu(FILE* f, size_t n) {
     return ptr;
 }
 
+#ifdef QUANT_INT8
+// Load one quantized projection matrix: `rows*in` INT8 weights followed by
+// `rows*(in/QUANT_GROUP_SIZE)` FP16 group scales, matching the export layout.
+static void load_quant(FILE* f, qweight_t** weight, half** scale, size_t rows, size_t in) {
+    *weight = alloc_gpu<qweight_t>(f, rows * in);
+    *scale  = alloc_gpu<half>(f, rows * (in / QUANT_GROUP_SIZE));
+}
+#endif
+
 QwenConfig load_weights(const std::string& bin_path, QwenWeights& weights) {
     FILE* f = fopen(bin_path.c_str(), "rb");
     if (!f) {
@@ -25,8 +34,8 @@ QwenConfig load_weights(const std::string& bin_path, QwenWeights& weights) {
         exit(EXIT_FAILURE);
     }
 
-    int32_t header[9] = {0};
-    if (fread(header, sizeof(int32_t), 9, f) != 9) {
+    int32_t header[10] = {0};
+    if (fread(header, sizeof(int32_t), 10, f) != 10) {
         std::cerr << "[!] Error: Failed to read binary weight header!" << std::endl;
         fclose(f);
         exit(EXIT_FAILURE);
@@ -46,6 +55,17 @@ QwenConfig load_weights(const std::string& bin_path, QwenWeights& weights) {
         header[5] != config.n_heads || header[6] != config.n_kv_heads ||
         header[7] != config.head_dim) {
         std::cerr << "[!] Error: Binary header dimensions do not match compiled QwenConfig parameters!" << std::endl;
+        fclose(f);
+        exit(EXIT_FAILURE);
+    }
+
+    if (header[9] != config.quant_type) {
+        const char* want = (config.quant_type == 1) ? "int8" : "fp16";
+        const char* got  = (header[9] == 1) ? "int8" : (header[9] == 0 ? "fp16" : "unknown");
+        std::cerr << "[!] Error: Quantization mismatch! This binary was compiled for '" << want
+                  << "' weights but the file '" << bin_path << "' is '" << got << "'.\n"
+                  << "    Re-export with '--quantization=" << want
+                  << "' or rebuild with '-Dquant=" << got << "'." << std::endl;
         fclose(f);
         exit(EXIT_FAILURE);
     }
@@ -71,6 +91,19 @@ QwenConfig load_weights(const std::string& bin_path, QwenWeights& weights) {
         LayerWeights& lw = weights.layers[l];
 
         lw.input_layernorm_weight          = alloc_gpu<half>(f, dim);
+#ifdef QUANT_INT8
+        load_quant(f, &lw.q_proj_weight, &lw.q_proj_scale, q_dim, dim);
+        lw.q_proj_bias                     = alloc_gpu<half>(f, q_dim);
+        load_quant(f, &lw.k_proj_weight, &lw.k_proj_scale, kv_dim, dim);
+        lw.k_proj_bias                     = alloc_gpu<half>(f, kv_dim);
+        load_quant(f, &lw.v_proj_weight, &lw.v_proj_scale, kv_dim, dim);
+        lw.v_proj_bias                     = alloc_gpu<half>(f, kv_dim);
+        load_quant(f, &lw.o_proj_weight, &lw.o_proj_scale, dim, q_dim);
+        lw.post_attention_layernorm_weight = alloc_gpu<half>(f, dim);
+        load_quant(f, &lw.gate_proj_weight, &lw.gate_proj_scale, inter, dim);
+        load_quant(f, &lw.up_proj_weight,   &lw.up_proj_scale,   inter, dim);
+        load_quant(f, &lw.down_proj_weight, &lw.down_proj_scale, dim, inter);
+#else
         lw.q_proj_weight                   = alloc_gpu<half>(f, q_dim * dim);
         lw.q_proj_bias                     = alloc_gpu<half>(f, q_dim);
         lw.k_proj_weight                   = alloc_gpu<half>(f, kv_dim * dim);
@@ -82,6 +115,7 @@ QwenConfig load_weights(const std::string& bin_path, QwenWeights& weights) {
         lw.gate_proj_weight                = alloc_gpu<half>(f, inter * dim);
         lw.up_proj_weight                  = alloc_gpu<half>(f, inter * dim);
         lw.down_proj_weight                = alloc_gpu<half>(f, dim * inter);
+#endif
     }
     std::cout << "  [+] Loaded all " << config.n_layers << " Transformer Layers successfully.            " << std::endl;
 
@@ -123,6 +157,15 @@ void free_weights(QwenWeights& weights, const QwenConfig& config) {
         CUDA_CHECK(cudaFree(lw.gate_proj_weight));
         CUDA_CHECK(cudaFree(lw.up_proj_weight));
         CUDA_CHECK(cudaFree(lw.down_proj_weight));
+#ifdef QUANT_INT8
+        CUDA_CHECK(cudaFree(lw.q_proj_scale));
+        CUDA_CHECK(cudaFree(lw.k_proj_scale));
+        CUDA_CHECK(cudaFree(lw.v_proj_scale));
+        CUDA_CHECK(cudaFree(lw.o_proj_scale));
+        CUDA_CHECK(cudaFree(lw.gate_proj_scale));
+        CUDA_CHECK(cudaFree(lw.up_proj_scale));
+        CUDA_CHECK(cudaFree(lw.down_proj_scale));
+#endif
     }
     CUDA_CHECK(cudaFree(weights.norm_weight));
 

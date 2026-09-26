@@ -61,12 +61,19 @@ void launch_argmax(
     cudaStream_t stream = 0
 );
 
+// Note on `qweight_t` + `*_scale` params below: qweight_t == half for FP16
+// builds and int8_t for INT8 (W8A16) builds. The scale pointers carry one FP16
+// scale per QUANT_GROUP_SIZE weights and are used only in INT8 builds (pass
+// nullptr for FP16). See load_w8() in kernels.cu for the in-kernel dequant.
 void launch_fused_attn_block(
     const half* x,
     const half* norm_weight,
-    const half* W_q,
-    const half* W_k,
-    const half* W_v,
+    const qweight_t* W_q,
+    const qweight_t* W_k,
+    const qweight_t* W_v,
+    const half* W_q_scale,
+    const half* W_k_scale,
+    const half* W_v_scale,
     const half* b_q,
     const half* b_k,
     const half* b_v,
@@ -88,8 +95,10 @@ void launch_fused_attn_block(
 void launch_fused_mlp_stage1(
     const half* x,
     const half* norm_weight,
-    const half* gate_weight,
-    const half* up_weight,
+    const qweight_t* gate_weight,
+    const qweight_t* up_weight,
+    const half* gate_scale,
+    const half* up_scale,
     half* intermediate_out,
     int dim,
     int inter_dim,
@@ -99,15 +108,19 @@ void launch_fused_mlp_stage1(
 
 void launch_fused_mlp_stage2(
     half* x,
-    const half* down_weight,
+    const qweight_t* down_weight,
+    const half* down_scale,
     const half* intermediate_in,
     int dim,
     int inter_dim,
     cudaStream_t stream = 0
 );
 
+// GEMV + residual add (used for o_proj). Retains the historical name; under
+// INT8 the weight is dequantized in-kernel via load_w8().
 void launch_gemv_add_fp16(
-    const half* W,
+    const qweight_t* W,
+    const half* W_scale,
     const half* input,
     half* x_inout,
     int rows,

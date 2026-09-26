@@ -33,6 +33,24 @@ else()
     message(FATAL_ERROR "Invalid model option '${model}'. Options are: 0.5b, 1.5b, 3b, 7b")
 endif()
 
+# 1b. Optional Input: -Dquant=<fp16|int8>  (default: fp16)
+#     int8 = weights-only quantization (W8A16): linear-projection weights are
+#     stored/loaded as INT8 + FP16 group scales and dequantized in-kernel.
+if(NOT DEFINED quant)
+    set(quant "fp16")
+endif()
+
+string(TOLOWER "${quant}" QUANT_MODE)
+
+if(QUANT_MODE STREQUAL "int8")
+    add_compile_definitions(QUANT_INT8)
+    set(QUANT_NAME_STR "INT8 (weights-only, W8A16)")
+elseif(QUANT_MODE STREQUAL "fp16")
+    set(QUANT_NAME_STR "FP16")
+else()
+    message(FATAL_ERROR "Invalid quant option '${quant}'. Options are: fp16, int8")
+endif()
+
 # 2. Compulsory Input: -Dgpu_arch=<architecture> (e.g. 75, 80, 86, 89)
 if(NOT DEFINED gpu_arch)
     message(FATAL_ERROR 
@@ -49,6 +67,7 @@ endif()
 set(CMAKE_CUDA_ARCHITECTURES ${gpu_arch})
 
 message(STATUS "Configuring CUQWEN build for model size: Qwen2.5-${MODEL_NAME_STR}")
+message(STATUS "Weight precision: ${QUANT_NAME_STR}")
 message(STATUS "Targeting CUDA Compute Capability: sm_${gpu_arch}")
 
 # 3. Find External Packages (CUDA & PCRE2)

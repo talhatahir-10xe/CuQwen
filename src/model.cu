@@ -100,6 +100,7 @@ static void qwen_forward_graph_body(
             state.att,
             lw.input_layernorm_weight,
             lw.q_proj_weight, lw.k_proj_weight, lw.v_proj_weight,
+            lw.q_proj_scale, lw.k_proj_scale, lw.v_proj_scale,
             lw.q_proj_bias, lw.k_proj_bias, lw.v_proj_bias,
             state.q, state.k, state.v,
             dim, q_dim, kv_dim,
@@ -125,7 +126,7 @@ static void qwen_forward_graph_body(
             state.d_partial_sum, stream
         );
 
-        launch_gemv_add_fp16(lw.o_proj_weight, state.xb, state.x, dim, q_dim, stream);
+        launch_gemv_add_fp16(lw.o_proj_weight, lw.o_proj_scale, state.xb, state.x, dim, q_dim, stream);
 
         launch_rmsnorm(
             state.x, lw.post_attention_layernorm_weight, state.att,
@@ -137,6 +138,8 @@ static void qwen_forward_graph_body(
             lw.post_attention_layernorm_weight,
             lw.gate_proj_weight,
             lw.up_proj_weight,
+            lw.gate_proj_scale,
+            lw.up_proj_scale,
             state.gate,
             dim, inter, config.norm_eps,
             stream
@@ -145,6 +148,7 @@ static void qwen_forward_graph_body(
         launch_fused_mlp_stage2(
             state.x,
             lw.down_proj_weight,
+            lw.down_proj_scale,
             state.gate,
             dim, inter,
             stream
