@@ -7,21 +7,36 @@
 #include <cuda_fp16.h>
 
 // ---------------------------------------------------------------------------
-// Weight quantization mode (selected at compile time via -Dquant=<fp16|int8>).
-// INT8 is weights-only (W8A16): the linear-projection weights are stored as
-// INT8 + per-group FP16 scales and dequantized to FP16 inside the kernels.
+// Weight quantization mode (selected at compile time via -Dquant=<fp16|int8|int4>).
+// INT8/INT4 are weights-only (W8A16 / W4A16): the linear-projection weights are
+// stored quantized + per-group FP16 scales and dequantized to FP16 inside the
+// kernels. INT4 additionally packs 2 weights per byte (low/high nibble).
 // Embeddings/LM head, RMSNorm weights and biases always remain FP16.
 // ---------------------------------------------------------------------------
 constexpr int QUANT_GROUP_SIZE = 128;   // weights sharing one scale (along input dim)
 
-#ifdef QUANT_INT8
-using qweight_t = int8_t;               // storage type of quantized weight matrices
+#if defined(QUANT_INT8)
+using qweight_t = int8_t;               // one INT8 weight per element
 #define QUANT_TAG "int8"
 #define QUANT_TYPE_ID 1
+#define QUANT_ENABLED
+#elif defined(QUANT_INT4)
+using qweight_t = int8_t;               // packed container: 2 x INT4 weights per byte
+#define QUANT_TAG "int4"
+#define QUANT_TYPE_ID 2
+#define QUANT_ENABLED
 #else
 using qweight_t = half;                 // FP16 build: weights stored directly as half
 #define QUANT_TAG "fp16"
 #define QUANT_TYPE_ID 0
+#endif
+
+// Stride (in units of qweight_t) of one weight row holding `cols` logical
+// weights. INT4 packs 2 weights per byte, so a row occupies cols/2 bytes.
+#ifdef QUANT_INT4
+#define WEIGHT_ROW_STRIDE(cols) ((cols) / 2)
+#else
+#define WEIGHT_ROW_STRIDE(cols) (cols)
 #endif
 
 #define CUDA_CHECK(call) \

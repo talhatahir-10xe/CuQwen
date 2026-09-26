@@ -18,11 +18,17 @@ static T* alloc_gpu(FILE* f, size_t n) {
     return ptr;
 }
 
-#ifdef QUANT_INT8
-// Load one quantized projection matrix: `rows*in` INT8 weights followed by
-// `rows*(in/QUANT_GROUP_SIZE)` FP16 group scales, matching the export layout.
+#ifdef QUANT_ENABLED
+// Load one quantized projection matrix: the packed/INT8 weight bytes followed
+// by `rows*(in/QUANT_GROUP_SIZE)` FP16 group scales, matching the export layout.
+// INT4 packs 2 weights per byte, so a row occupies in/2 bytes; INT8 uses in.
 static void load_quant(FILE* f, qweight_t** weight, half** scale, size_t rows, size_t in) {
-    *weight = alloc_gpu<qweight_t>(f, rows * in);
+#ifdef QUANT_INT4
+    const size_t weight_bytes = rows * (in / 2);
+#else
+    const size_t weight_bytes = rows * in;
+#endif
+    *weight = alloc_gpu<qweight_t>(f, weight_bytes);
     *scale  = alloc_gpu<half>(f, rows * (in / QUANT_GROUP_SIZE));
 }
 #endif
@@ -60,8 +66,11 @@ QwenConfig load_weights(const std::string& bin_path, QwenWeights& weights) {
     }
 
     if (header[9] != config.quant_type) {
-        const char* want = (config.quant_type == 1) ? "int8" : "fp16";
-        const char* got  = (header[9] == 1) ? "int8" : (header[9] == 0 ? "fp16" : "unknown");
+        auto quant_name = [](int q) {
+            return q == 2 ? "int4" : q == 1 ? "int8" : q == 0 ? "fp16" : "unknown";
+        };
+        const char* want = quant_name(config.quant_type);
+        const char* got  = quant_name(header[9]);
         std::cerr << "[!] Error: Quantization mismatch! This binary was compiled for '" << want
                   << "' weights but the file '" << bin_path << "' is '" << got << "'.\n"
                   << "    Re-export with '--quantization=" << want
@@ -91,7 +100,7 @@ QwenConfig load_weights(const std::string& bin_path, QwenWeights& weights) {
         LayerWeights& lw = weights.layers[l];
 
         lw.input_layernorm_weight          = alloc_gpu<half>(f, dim);
-#ifdef QUANT_INT8
+#ifdef QUANT_ENABLED
         load_quant(f, &lw.q_proj_weight, &lw.q_proj_scale, q_dim, dim);
         lw.q_proj_bias                     = alloc_gpu<half>(f, q_dim);
         load_quant(f, &lw.k_proj_weight, &lw.k_proj_scale, kv_dim, dim);
@@ -157,7 +166,7 @@ void free_weights(QwenWeights& weights, const QwenConfig& config) {
         CUDA_CHECK(cudaFree(lw.gate_proj_weight));
         CUDA_CHECK(cudaFree(lw.up_proj_weight));
         CUDA_CHECK(cudaFree(lw.down_proj_weight));
-#ifdef QUANT_INT8
+#ifdef QUANT_ENABLED
         CUDA_CHECK(cudaFree(lw.q_proj_scale));
         CUDA_CHECK(cudaFree(lw.k_proj_scale));
         CUDA_CHECK(cudaFree(lw.v_proj_scale));

@@ -20,7 +20,7 @@ Complete benchmarking results and details can be found [here](https://github.com
 
 ## Supported Models
 
-CuQwen natively supports the **Qwen2.5** model family across multiple parameter scales, in either `fp16` or weights-only `int8` (W8A16) precision:
+CuQwen natively supports the **Qwen2.5** model family across multiple parameter scales, in `fp16` or weights-only `int8` (W8A16) / `int4` (W4A16) precision:
 
 * **Qwen2.5-0.5B** (`0.5b`)
 * **Qwen2.5-1.5B** (`1.5b`)
@@ -81,9 +81,9 @@ This builds the image, starts the container, and drops you into a shell with ful
 ```bash
 python3 export_weights.py --model=<model_size> --quantization=<quant>
 ```
-where, `model_size` can be `0.5b`, `1.5b`, `3b` or `7b`, and `quant` can be `fp16` (default) or `int8`.
+where, `model_size` can be `0.5b`, `1.5b`, `3b` or `7b`, and `quant` can be `fp16` (default), `int8` or `int4`.
 
-`--quantization=int8` enables **weights-only INT8 quantization (W8A16)**: the linear-projection weights (`q/k/v/o_proj`, `gate/up/down_proj`) are stored as INT8 with per-group FP16 scales (128 weights per scale), and dequantized to FP16 in-kernel. Token embeddings / LM head, RMSNorm weights, biases, and the KV cache remain FP16. This roughly halves the projection-weight footprint (e.g. Qwen2.5-3B fits comfortably in 8 GB VRAM, where the FP16 model would not).
+`--quantization=int8` / `int4` enables **weights-only quantization (W8A16 / W4A16)**: the linear-projection weights (`q/k/v/o_proj`, `gate/up/down_proj`) are stored quantized with per-group FP16 scales (128 weights per scale) and dequantized to FP16 in-kernel; `int4` additionally packs two weights per byte. Token embeddings / LM head, RMSNorm weights, biases, and the KV cache remain FP16. This shrinks the projection-weight footprint to roughly 1/2 (`int8`) or 1/4 (`int4`), e.g. Qwen2.5-3B fits comfortably in 8 GB VRAM where the FP16 model would not.
 
 2. **Build the Engine**: Specify the model size, target GPU compute architecture (e.g., `75` for RTX 2070, `86` for RTX 3090, `89` for RTX 4090), and — matching the exported weights — the precision.
 
@@ -94,7 +94,7 @@ cmake -Dmodel=<model_size> -Dgpu_arch=<gpu_architecture> -Dquant=<quant> ..
 make -j$(nproc)
 cd ..
 ```
-where `quant` is `fp16` (default) or `int8`, and **must match the `--quantization` used during export** (the engine validates this against the binary header). Omitting `-Dquant` builds the FP16 engine.
+where `quant` is `fp16` (default), `int8` or `int4`, and **must match the `--quantization` used during export** (the engine validates this against the binary header). Omitting `-Dquant` builds the FP16 engine.
 3. **Launch Interactive Chat**
 ```bash
 ./build/cuqwen

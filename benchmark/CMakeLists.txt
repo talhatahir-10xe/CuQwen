@@ -39,8 +39,10 @@ string(TOLOWER "${quant}" QUANT_MODE)
 
 if(QUANT_MODE STREQUAL "int8")
     add_compile_definitions(QUANT_INT8)
+elseif(QUANT_MODE STREQUAL "int4")
+    add_compile_definitions(QUANT_INT4)
 elseif(NOT QUANT_MODE STREQUAL "fp16")
-    message(FATAL_ERROR "Invalid quant option '${quant}'. Options are: fp16, int8")
+    message(FATAL_ERROR "Invalid quant option '${quant}'. Options are: fp16, int8, int4")
 endif()
 
 # 2. Check if gpu_arch is provided

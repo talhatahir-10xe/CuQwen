@@ -33,9 +33,10 @@ else()
     message(FATAL_ERROR "Invalid model option '${model}'. Options are: 0.5b, 1.5b, 3b, 7b")
 endif()
 
-# 1b. Optional Input: -Dquant=<fp16|int8>  (default: fp16)
-#     int8 = weights-only quantization (W8A16): linear-projection weights are
-#     stored/loaded as INT8 + FP16 group scales and dequantized in-kernel.
+# 1b. Optional Input: -Dquant=<fp16|int8|int4>  (default: fp16)
+#     int8/int4 = weights-only quantization (W8A16/W4A16): linear-projection
+#     weights are stored/loaded quantized + FP16 group scales and dequantized
+#     in-kernel. int4 additionally packs 2 weights per byte.
 if(NOT DEFINED quant)
     set(quant "fp16")
 endif()
@@ -45,10 +46,13 @@ string(TOLOWER "${quant}" QUANT_MODE)
 if(QUANT_MODE STREQUAL "int8")
     add_compile_definitions(QUANT_INT8)
     set(QUANT_NAME_STR "INT8 (weights-only, W8A16)")
+elseif(QUANT_MODE STREQUAL "int4")
+    add_compile_definitions(QUANT_INT4)
+    set(QUANT_NAME_STR "INT4 (weights-only, W4A16)")
 elseif(QUANT_MODE STREQUAL "fp16")
     set(QUANT_NAME_STR "FP16")
 else()
-    message(FATAL_ERROR "Invalid quant option '${quant}'. Options are: fp16, int8")
+    message(FATAL_ERROR "Invalid quant option '${quant}'. Options are: fp16, int8, int4")
 endif()
 
 # 2. Compulsory Input: -Dgpu_arch=<architecture> (e.g. 75, 80, 86, 89)

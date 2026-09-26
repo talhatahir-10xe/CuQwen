@@ -23,7 +23,9 @@ MAGIC_NUMBER    = 0x5157454E   # ASCII "QWEN"
 # Quantization type tags written into the binary header (must match config.h)
 QUANT_FP16      = 0
 QUANT_INT8      = 1
+QUANT_INT4      = 2
 QUANT_GROUP     = 128          # weights per scale (grouped along the input/contraction dim)
+QUANT_TYPE_ID   = {"fp16": QUANT_FP16, "int8": QUANT_INT8, "int4": QUANT_INT4}
 
 def print_header(title: str):
     print(f"\n╔═{'═' * 76}═╗")
@@ -155,17 +157,68 @@ def write_int8(file_obj, arr: np.ndarray, group: int = QUANT_GROUP) -> int:
     return len(w_bytes) + len(s_bytes)
 
 
+def quantize_int4_groupwise(arr: np.ndarray, group: int = QUANT_GROUP):
+    """Symmetric per-group INT4 quantization along the input (contraction) dim.
+
+    Same scheme as INT8 but with a 4-bit range: scale = max(|w|) / 7, values
+    clamped to [-7, 7]. Returns (int4_values [out, in] as int8 in [-7,7],
+    fp16_scales [out, in/group]).
+    """
+    arr = arr.astype(np.float32)
+    out_features, in_features = arr.shape
+    assert in_features % group == 0, (
+        f"in_features={in_features} not divisible by group size {group}"
+    )
+    n_groups = in_features // group
+
+    grouped = arr.reshape(out_features, n_groups, group)
+    max_abs = np.max(np.abs(grouped), axis=2)
+    scales = max_abs / 7.0
+    safe_scales = np.where(scales > 0.0, scales, 1.0)
+
+    q = np.round(grouped / safe_scales[:, :, None])
+    q = np.clip(q, -7, 7).astype(np.int8)
+
+    return q.reshape(out_features, in_features), scales.astype(np.float16)
+
+
+def write_int4(file_obj, arr: np.ndarray, group: int = QUANT_GROUP) -> int:
+    """Serialize a weight matrix as [packed INT4 weights][FP16 group scales].
+
+    Two weights are packed per byte: element 2p in the low nibble and element
+    2p+1 in the high nibble (matching the in-kernel unpack in load_w8).
+    """
+    if arr.ndim != 2:
+        raise ValueError(f"INT4 export expects a 2D weight matrix, got shape {arr.shape}")
+    q, scales = quantize_int4_groupwise(arr, group)
+    out_features, in_features = q.shape
+
+    # 4-bit two's-complement nibbles (e.g. -7 -> 0x9), packed low|high per byte.
+    nib = (q.astype(np.int16) & 0xF).astype(np.uint8).reshape(out_features, in_features // 2, 2)
+    packed = (nib[:, :, 0] | (nib[:, :, 1] << 4)).astype(np.uint8)
+
+    w_bytes = packed.tobytes()
+    s_bytes = scales.astype(np.float16).tobytes()
+    file_obj.write(w_bytes)
+    file_obj.write(s_bytes)
+    return len(w_bytes) + len(s_bytes)
+
+
 def export_weights(model_dir: str, model_size: str, quant: str = "fp16"):
     os.makedirs(WEIGHTS_DIR, exist_ok=True)
-    quant_tag  = "int8" if quant == "int8" else "fp16"
-    quant_type = QUANT_INT8 if quant == "int8" else QUANT_FP16
-    is_int8    = (quant == "int8")
+    quant_tag    = quant
+    quant_type   = QUANT_TYPE_ID[quant]
+    is_quantized = (quant != "fp16")
     out_bin_path = os.path.join(WEIGHTS_DIR, f"model_{quant_tag}_{model_size.replace('.', '_')}.bin")
 
-    # For INT8 builds, the linear-projection weights are quantized; everything
-    # else (embeddings/LM head, RMSNorm weights, biases) stays FP16.
+    # For quantized builds, only the linear-projection weights are quantized;
+    # everything else (embeddings/LM head, RMSNorm weights, biases) stays FP16.
     def write_proj(f, arr):
-        return write_int8(f, arr) if is_int8 else write_fp16(f, arr)
+        if quant == "int8":
+            return write_int8(f, arr)
+        if quant == "int4":
+            return write_int4(f, arr)
+        return write_fp16(f, arr)
 
     cfg = read_config(model_dir)
     vocab_size          = cfg["vocab_size"]
@@ -188,8 +241,11 @@ def export_weights(model_dir: str, model_size: str, quant: str = "fp16"):
     print(f"  │ • Head Dim:         {head_dim}")
     print(f"  │ • Max Seq Len:      {max_seq_len:,}")
     print(f"  │ • Tied Embeddings:  {bool(tie_word_embeddings)}")
-    if is_int8:
+    if quant == "int8":
         print(f"  │ • Precision:        INT8 weights-only (W8A16), group={QUANT_GROUP}")
+        print(f"  │ • FP16 retained:    embeddings/LM head, RMSNorm weights, biases")
+    elif quant == "int4":
+        print(f"  │ • Precision:        INT4 weights-only (W4A16, packed), group={QUANT_GROUP}")
         print(f"  │ • FP16 retained:    embeddings/LM head, RMSNorm weights, biases")
     else:
         print(f"  │ • Precision:        FP16")
@@ -197,7 +253,7 @@ def export_weights(model_dir: str, model_size: str, quant: str = "fp16"):
 
     reader = MultiShardSafetensors(model_dir)
 
-    print_section(f"3. Serializing {'INT8' if is_int8 else 'FP16'} Binary Weights")
+    print_section(f"3. Serializing {quant.upper()} Binary Weights")
     total_bytes = 0
 
     with open(out_bin_path, "wb") as f:
@@ -304,15 +360,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Export Qwen 2.5 PyTorch/Safetensors weights and tokenizer to binary format.")
     parser.add_argument("--model", type=str, required=True, choices=["0.5b", "1.5b", "3b", "7b"],
                         help="Model size variant to export (0.5b, 1.5b, 3b, 7b)")
-    parser.add_argument("--quantization", type=str, default="fp16", choices=["fp16", "int8"],
-                        help="Weight precision: 'fp16' (default) or 'int8' (weights-only W8A16)")
+    parser.add_argument("--quantization", type=str, default="fp16", choices=["fp16", "int8", "int4"],
+                        help="Weight precision: 'fp16' (default), 'int8' (W8A16) or 'int4' (W4A16), weights-only")
 
     if len(sys.argv) == 1:
         parser.print_help()
         print("\nExample commands:")
         print("  python3 export_weights.py --model=0.5b")
         print("  python3 export_weights.py --model=1.5b --quantization=int8")
-        print("  python3 export_weights.py --model=3b  --quantization=int8")
+        print("  python3 export_weights.py --model=3b  --quantization=int4")
         print("  python3 export_weights.py --model=7b")
         sys.exit(1)
 

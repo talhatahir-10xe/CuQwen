@@ -20,7 +20,7 @@ union Vector128 {
 //   INT8 build : a 64-bit __ldg of 8 INT8 weights, dequantized with the row's
 //                per-group FP16 scale (QUANT_GROUP_SIZE weights per scale, i.e.
 //                QUANT_GROUP_SIZE/8 = 16 chunks per group -> scale idx c>>4).
-#ifdef QUANT_INT8
+#if defined(QUANT_INT8)
 __device__ __forceinline__ void load_w8(
     const int8_t* __restrict__ w_row, const half* __restrict__ srow, int c, half2 wh[4]
 ) {
@@ -31,6 +31,22 @@ __device__ __forceinline__ void load_w8(
     for (int k = 0; k < 4; ++k)
         wh[k] = make_half2(__float2half((float)b[2 * k]     * s),
                            __float2half((float)b[2 * k + 1] * s));
+}
+#elif defined(QUANT_INT4)
+__device__ __forceinline__ void load_w8(
+    const int8_t* __restrict__ w_row, const half* __restrict__ srow, int c, half2 wh[4]
+) {
+    // 8 packed INT4 weights = 4 bytes -> one 32-bit coalesced load. Each byte
+    // holds two weights (element 2k in the low nibble, 2k+1 in the high nibble).
+    int raw = __ldg(reinterpret_cast<const int*>(w_row) + c);
+    float s = __half2float(__ldg(srow + (c >> 4)));
+    #pragma unroll
+    for (int k = 0; k < 4; ++k) {
+        int byte = (raw >> (8 * k)) & 0xFF;
+        int lo = ((byte & 0xF) ^ 0x8) - 0x8;   // sign-extend 4-bit nibble
+        int hi = (((byte >> 4) & 0xF) ^ 0x8) - 0x8;
+        wh[k] = make_half2(__float2half((float)lo * s), __float2half((float)hi * s));
+    }
 }
 #else
 __device__ __forceinline__ void load_w8(
@@ -405,7 +421,7 @@ __global__ void fused_attn_block_kernel(
     if (out_idx >= total) return;
 
     const int vec_dim = dim / 8;
-#ifdef QUANT_INT8
+#ifdef QUANT_ENABLED
     const int grp_dim = dim / QUANT_GROUP_SIZE;   // scales per weight row
 #endif
     const float4* x_g = reinterpret_cast<const float4*>(xn);
@@ -416,23 +432,23 @@ __global__ void fused_attn_block_kernel(
     const bool is_q = (out_idx < q_dim);
     const bool is_k = (out_idx >= q_dim && out_idx < q_dim + kv_dim);
     if (is_q) {
-        W_row = W_q + (size_t)out_idx * dim;
+        W_row = W_q + (size_t)out_idx * WEIGHT_ROW_STRIDE(dim);
         bias_val = __half2float(b_q[out_idx]);
-#ifdef QUANT_INT8
+#ifdef QUANT_ENABLED
         W_srow = W_q_scale + (size_t)out_idx * grp_dim;
 #endif
     } else if (is_k) {
         int ki = out_idx - q_dim;
-        W_row = W_k + (size_t)ki * dim;
+        W_row = W_k + (size_t)ki * WEIGHT_ROW_STRIDE(dim);
         bias_val = __half2float(b_k[ki]);
-#ifdef QUANT_INT8
+#ifdef QUANT_ENABLED
         W_srow = W_k_scale + (size_t)ki * grp_dim;
 #endif
     } else {
         int vi = out_idx - q_dim - kv_dim;
-        W_row = W_v + (size_t)vi * dim;
+        W_row = W_v + (size_t)vi * WEIGHT_ROW_STRIDE(dim);
         bias_val = __half2float(b_v[vi]);
-#ifdef QUANT_INT8
+#ifdef QUANT_ENABLED
         W_srow = W_v_scale + (size_t)vi * grp_dim;
 #endif
     }
@@ -525,11 +541,11 @@ __global__ void fused_mlp_stage1_kernel(
 
     const int vec_dim = dim / 8;
     const float4* x_g    = reinterpret_cast<const float4*>(xn);
-    const qweight_t* gate_row = gate_weight + (size_t)row * dim;
-    const qweight_t* up_row   = up_weight   + (size_t)row * dim;
+    const qweight_t* gate_row = gate_weight + (size_t)row * WEIGHT_ROW_STRIDE(dim);
+    const qweight_t* up_row   = up_weight   + (size_t)row * WEIGHT_ROW_STRIDE(dim);
     const half* gate_srow = nullptr;
     const half* up_srow   = nullptr;
-#ifdef QUANT_INT8
+#ifdef QUANT_ENABLED
     const int grp_dim = dim / QUANT_GROUP_SIZE;
     gate_srow = gate_scale + (size_t)row * grp_dim;
     up_srow   = up_scale   + (size_t)row * grp_dim;
@@ -600,9 +616,9 @@ __global__ void fused_mlp_stage2_kernel(
     if (row >= dim) return;
 
     const int vec_inter = inter_dim / 8;
-    const qweight_t* down_row = down_weight + (size_t)row * inter_dim;
+    const qweight_t* down_row = down_weight + (size_t)row * WEIGHT_ROW_STRIDE(inter_dim);
     const half* down_srow = nullptr;
-#ifdef QUANT_INT8
+#ifdef QUANT_ENABLED
     down_srow = down_scale + (size_t)row * (inter_dim / QUANT_GROUP_SIZE);
 #endif
     const float4* inter_g = reinterpret_cast<const float4*>(intermediate_in);
@@ -657,9 +673,9 @@ __global__ void gemv_add_fp16_kernel(
     if (row >= rows) return;
 
     const int vec_cols = cols / 8;
-    const qweight_t* W_row = W + (size_t)row * cols;
+    const qweight_t* W_row = W + (size_t)row * WEIGHT_ROW_STRIDE(cols);
     const half* W_srow = nullptr;
-#ifdef QUANT_INT8
+#ifdef QUANT_ENABLED
     W_srow = W_scale + (size_t)row * (cols / QUANT_GROUP_SIZE);
 #endif
     const float4* in_vec = reinterpret_cast<const float4*>(input);
