@@ -2,7 +2,9 @@
 
 This directory contains the benchmarker applications and evaluation scripts used to compare **CuQwen** against production LLM inference frameworks (**vLLM** and **Ollama**).
 
-The benchmark measures bare-metal, single-user (`Batch Size 1`) autoregressive decode speed across a **32k context window** sampled in **1k slice increments**.
+The benchmark measures bare-metal, single-user (`Batch Size 1`) autoregressive decode speed across the **32k context window**. To keep runs fast, throughput is **sampled at 9 context depths** (a timed 0.5K decode slice ending at each of `1K, 5K, 9K, 13K, 17K, 21K, 25K, 29K, 32K`) rather than decoding every token; the initial `0–0.5K` slice is an untimed warmup. Decode work between sampled windows is skipped by advancing the position directly — since the KV cache is preallocated and attention cost scales with context length, per-token throughput at each sampled depth stays representative.
+
+CuQwen supports `fp16`, `int8` (W8A16) and `int4` (W4A16) weights; the benchmark reports the precision it was built with.
 
 ## Directory Overview
 
@@ -27,17 +29,19 @@ First, convert the Hugging Face weights into CuQwen's raw binary format from the
 
 ```bash
 # From project root
-python3 export_weights.py --model=<model_size>
+python3 export_weights.py --model=<model_size> --quantization=<quant>
 ```
+
+where `quant` is `fp16` (default), `int8` or `int4`.
 
 #### Build and Run Binary
 
-Build the native C++/CUDA benchmark executable from within the `benchmark/` folder:
+Build the native C++/CUDA benchmark executable from within the `benchmark/` folder. The `-Dquant` value **must match** the precision used during export (default `fp16`):
 
 ```bash
 cd benchmark
 mkdir -p build && cd build
-cmake -Dmodel=<model_size> -Dgpu_arch=<gpu_architecture> ..
+cmake -Dmodel=<model_size> -Dgpu_arch=<gpu_architecture> -Dquant=<quant> ..
 make -j$(nproc)
 cd ..
 
@@ -96,13 +100,13 @@ python3 ollama_benchmark.py --model=1.5b
 
 ## Benchmark Output Metrics
 
-All three framework runners record and report identical metric parameters to allow direct head-to-head comparisons:
+All framework runners record and report the same metric parameters to allow direct head-to-head comparisons:
 
-* **Token Slice Throughput (tok/s):** Measured speed across each 1,000-token context chunk ($0\rightarrow1\text{k}, 1\text{k}\rightarrow2\text{k}, \dots, 7\text{k}\rightarrow32\text{k}$).
-* **Average Speed (tok/s):** Mean generation speed across the entire 32k context window.
-* **Speed Decay Rate (%):** Percentage drop in throughput from the initial 1k slice to the final 32k slice:
+* **Sampled Slice Throughput (tok/s):** Measured speed of a 0.5K decode slice at each of the 9 sampled context depths ($1\text{k}, 5\text{k}, 9\text{k}, \dots, 29\text{k}, 32\text{k}$).
+* **Average Speed (tok/s):** Mean throughput across the 9 sampled depths.
+* **Speed Decay Rate (%):** Percentage drop in throughput from the first sampled depth (~1k) to the last (~32k):
 
-$$\text{Decay Rate} = \frac{\text{Speed}_{1\text{k}} - \text{Speed}_{8\text{k}}}{\text{Speed}_{1\text{k}}} \times 100$$
+$$\text{Decay Rate} = \frac{\text{Speed}_{1\text{k}} - \text{Speed}_{32\text{k}}}{\text{Speed}_{1\text{k}}} \times 100$$
 
 ---
 

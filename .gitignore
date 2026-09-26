@@ -11,3 +11,7 @@ build/
 # CuQwen Weights directory
 weights/
 **/weights/
+
+# Python cache
+__pycache__/
+*.pyc
