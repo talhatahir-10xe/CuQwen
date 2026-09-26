@@ -2,6 +2,8 @@
 
 ![CuQwen](/assets/CuQwen.jpeg)
 
+***Note: This is the current working branch for the next release in which I'm working on supporting int8 and int4 weights only quantization for the current models in CuQwen (W8A16 and W4A16)***
+
 CuQwen is a C++/CUDA inference engine written purely from scratch to explore the theoretical performance limits of single-user (```Batch Size 1```) autoregressive token generation using optimized custom CUDA kernels for open source Qwen models that can run on local edge devices for Nvidia GPUs.
 
 ## Performance
