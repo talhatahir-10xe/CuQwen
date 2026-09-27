@@ -20,34 +20,26 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 from vllm import LLM, SamplingParams
 
-MODEL_MAP = {
-    "0.5b": "Qwen/Qwen2.5-0.5B-Instruct",
-    "1.5b": "Qwen/Qwen2.5-1.5B-Instruct",
-    "3b":   "Qwen/Qwen2.5-3B-Instruct",
-    "7b":   "Qwen/Qwen2.5-7B-Instruct",
-}
+# Official Qwen2.5 checkpoints (auto-downloaded by vLLM). GPTQ-Int8/Int4 are
+# weights-only (W8A16/W4A16), symmetric, group_size 128, FP16 embeddings/lm_head/
+# norms and FP16 KV cache — the same W*A16 group-128 scheme as CuQwen.
+MODEL_SIZE_MAP = {"0.5b": "0.5B", "1.5b": "1.5B", "3b": "3B", "7b": "7B"}
 
 
 def resolve_model(model_size: str, quant: str) -> str:
-    """FP16 -> HF model id; int8/int4 -> local compressed-tensors dir."""
+    s = MODEL_SIZE_MAP[model_size]
     if quant == "fp16":
-        return MODEL_MAP[model_size]
-    here = os.path.dirname(os.path.abspath(__file__))
-    path = os.path.normpath(os.path.join(
-        here, "..", "weights", "vllm_quant", f"{model_size.replace('.', '_')}_{quant}"
-    ))
-    if not os.path.isdir(path):
-        sys.exit(
-            f"[!] Quantized model not found: {path}\n"
-            f"    Produce it first:\n"
-            f"      python3 quantize_for_vllm.py --model={model_size} --quantization={quant}"
-        )
-    return path
+        return f"Qwen/Qwen2.5-{s}-Instruct"
+    if quant == "int8":
+        return f"Qwen/Qwen2.5-{s}-Instruct-GPTQ-Int8"
+    if quant == "int4":
+        return f"Qwen/Qwen2.5-{s}-Instruct-GPTQ-Int4"
+    raise ValueError(quant)
 
 
 def main():
     parser = argparse.ArgumentParser(description="vLLM interactive chat (FP16/INT8/INT4)")
-    parser.add_argument("--model", required=True, choices=list(MODEL_MAP.keys()),
+    parser.add_argument("--model", required=True, choices=list(MODEL_SIZE_MAP.keys()),
                         help="Model size variant: 0.5b, 1.5b, 3b, or 7b")
     parser.add_argument("--quantization", default="fp16", choices=["fp16", "int8", "int4"],
                         help="Weight precision: fp16 (default), int8 (W8A16) or int4 (W4A16)")
@@ -56,8 +48,8 @@ def main():
     args = parser.parse_args()
 
     model_id = resolve_model(args.model, args.quantization)
-    precision = {"fp16": "FP16", "int8": "INT8 (weights-only, W8A16)",
-                 "int4": "INT4 (weights-only, W4A16)"}[args.quantization]
+    precision = {"fp16": "FP16", "int8": "INT8 GPTQ (weights-only, W8A16)",
+                 "int4": "INT4 GPTQ (weights-only, W4A16)"}[args.quantization]
 
     print("========================================================================")
     print(f"         vLLM Chat Application (Qwen2.5 {args.model.upper()})")

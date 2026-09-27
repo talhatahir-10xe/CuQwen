@@ -9,12 +9,23 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 from vllm import AsyncLLMEngine, AsyncEngineArgs, SamplingParams
 
-MODEL_MAP = {
-    "0.5b": "Qwen/Qwen2.5-0.5B-Instruct",
-    "1.5b": "Qwen/Qwen2.5-1.5B-Instruct",
-    "3b":   "Qwen/Qwen2.5-3B-Instruct",
-    "7b":   "Qwen/Qwen2.5-7B-Instruct",
-}
+# Official Qwen2.5 checkpoints, loaded directly by vLLM (auto-downloaded from HF).
+# The GPTQ-Int8/Int4 models are weights-only (W8A16/W4A16), symmetric, group_size
+# 128, with FP16 embeddings/lm_head/norms and FP16 KV cache — the same W*A16
+# group-128 symmetric scheme as CuQwen (GPTQ differs only in the calibration
+# algorithm, not the storage format or kernels).
+MODEL_SIZE_MAP = {"0.5b": "0.5B", "1.5b": "1.5B", "3b": "3B", "7b": "7B"}
+
+
+def resolve_model(model_size: str, quant: str) -> str:
+    s = MODEL_SIZE_MAP[model_size]
+    if quant == "fp16":
+        return f"Qwen/Qwen2.5-{s}-Instruct"
+    if quant == "int8":
+        return f"Qwen/Qwen2.5-{s}-Instruct-GPTQ-Int8"
+    if quant == "int4":
+        return f"Qwen/Qwen2.5-{s}-Instruct-GPTQ-Int4"
+    raise ValueError(quant)
 
 VOCAB_SIZE   = 151936
 MAX_CONTEXT  = 32000
@@ -33,23 +44,6 @@ class BenchmarkInterval:
         self.end_token   = end_token
         self.duration_ms = duration_ms
         self.tok_per_sec = tok_per_sec
-
-
-def resolve_model(model_size: str, quant: str) -> str:
-    """FP16 -> HF model id; int8/int4 -> local compressed-tensors dir."""
-    if quant == "fp16":
-        return MODEL_MAP[model_size]
-    here = os.path.dirname(os.path.abspath(__file__))
-    path = os.path.normpath(os.path.join(
-        here, "..", "weights", "vllm_quant", f"{model_size.replace('.', '_')}_{quant}"
-    ))
-    if not os.path.isdir(path):
-        sys.exit(
-            f"[!] Quantized model not found: {path}\n"
-            f"    Produce it first:\n"
-            f"      python3 quantize_for_vllm.py --model={model_size} --quantization={quant}"
-        )
-    return path
 
 
 async def decode_window(engine, dummy_tokens, start, req_id):
@@ -83,8 +77,8 @@ async def decode_window(engine, dummy_tokens, start, req_id):
 
 async def run_benchmark(model_size: str, quant: str):
     model_id = resolve_model(model_size, quant)
-    precision = {"fp16": "FP16", "int8": "INT8 (weights-only, W8A16)",
-                 "int4": "INT4 (weights-only, W4A16)"}[quant]
+    precision = {"fp16": "FP16", "int8": "INT8 GPTQ (weights-only, W8A16)",
+                 "int4": "INT4 GPTQ (weights-only, W4A16)"}[quant]
 
     print("========================================================================")
     print(f"   vLLM: Sampled Decode Benchmark Suite (Qwen2.5 {model_size.upper()})")
@@ -167,10 +161,10 @@ async def run_benchmark(model_size: str, quant: str):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="vLLM Sampled Decode Benchmark")
-    parser.add_argument("--model", type=str, required=True, choices=list(MODEL_MAP.keys()),
+    parser.add_argument("--model", type=str, required=True, choices=list(MODEL_SIZE_MAP.keys()),
                         help="Model size variant: 0.5b, 1.5b, 3b, or 7b")
     parser.add_argument("--quantization", type=str, default="fp16", choices=["fp16", "int8", "int4"],
-                        help="Weight precision: fp16 (default), int8 (W8A16) or int4 (W4A16). "
-                             "int8/int4 load a checkpoint made by quantize_for_vllm.py.")
+                        help="fp16 (default), int8 or int4 — loads the official Qwen2.5 base / "
+                             "GPTQ-Int8 / GPTQ-Int4 model (auto-downloaded by vLLM).")
     args = parser.parse_args()
     asyncio.run(run_benchmark(args.model.lower(), args.quantization))
