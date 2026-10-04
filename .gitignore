@@ -15,3 +15,6 @@ weights/
 # Python cache
 __pycache__/
 *.pyc
+
+# Local benchmarking setup notes (content folded into benchmark/README.md)
+benchmark/setup.md

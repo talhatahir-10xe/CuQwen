@@ -8,27 +8,6 @@ union Vector128 {
     half2 h2[4];
 };
 
-// ---------------------------------------------------------------------------
-// Fused weight-fetch + dequant + dot-product helper shared by all GEMV kernels.
-//
-// Computes the dot product of 8 consecutive weights of chunk `c` from row
-// `w_row` with the 8 activations in `xh[4]` (4 x half2), matching the 8-wide
-// (float4-of-half) input vectorization used throughout. This is the ONLY place
-// FP16 vs INT8 vs INT4 weight handling differs, so every kernel's reduction
-// loop stays identical across builds.
-//
-// Accumulation is done entirely in FP32: quantized weights are dequantized
-// straight from int -> float (no intermediate FP16 round-trip), and the shared
-// per-group scale is applied ONCE to the 8-wide partial sum instead of to every
-// element. Both cut the per-element ALU work that bottlenecks the low-bit
-// (INT4/INT8) kernels, which read so few weight bytes they are dequant-bound
-// rather than memory-bound.
-//
-//   FP16 build : a single 128-bit __ldg of the half weights.
-//   INT8 build : a 64-bit __ldg of 8 INT8 weights + one FP16 group scale.
-//   INT4 build : a 32-bit __ldg of 8 packed INT4 weights + one FP16 group scale
-//                (QUANT_GROUP_SIZE weights per scale -> 16 chunks per group ->
-//                 scale idx c>>4).
 #if defined(QUANT_INT8)
 __device__ __forceinline__ float dot8(
     const int8_t* __restrict__ w_row, const half* __restrict__ srow, int c, const half2* xh
@@ -48,15 +27,13 @@ __device__ __forceinline__ float dot8(
 __device__ __forceinline__ float dot8(
     const int8_t* __restrict__ w_row, const half* __restrict__ srow, int c, const half2* xh
 ) {
-    // 8 packed INT4 weights = 4 bytes -> one 32-bit coalesced load. Each byte
-    // holds two weights (element 2k in the low nibble, 2k+1 in the high nibble).
     int raw = __ldg(reinterpret_cast<const int*>(w_row) + c);
     float s = __half2float(__ldg(srow + (c >> 4)));
     float p = 0.0f;
     #pragma unroll
     for (int k = 0; k < 4; ++k) {
         int byte = (raw >> (8 * k)) & 0xFF;
-        int lo = ((byte & 0xF) ^ 0x8) - 0x8;        // sign-extend 4-bit nibble
+        int lo = ((byte & 0xF) ^ 0x8) - 0x8;
         int hi = (((byte >> 4) & 0xF) ^ 0x8) - 0x8;
         p = __fmaf_rn((float)lo, __half2float(xh[k].x),
             __fmaf_rn((float)hi, __half2float(xh[k].y), p));
@@ -98,7 +75,6 @@ __device__ __forceinline__ float block_reduce_sum(float val, float* s_mem) {
     }
     __syncthreads();
 
-    // Reduce warp sums using the first warp
     val = (threadIdx.x < blockDim.x / 32) ? s_mem[lane] : 0.0f;
     if (warp_id == 0) {
         val = warp_reduce_sum(val);
@@ -762,7 +738,6 @@ __global__ void rmsnorm_kernel(
         out_vec[i] = out_v.f4;
     }
 
-    // Scalar tail write
     for (int i = vec_dim * 8 + tid; i < dim; i += blockDim.x) {
         float val = __half2float(x[i]) * inv_rms_f32 * __half2float(norm_weight[i]);
         out[i] = __float2half(val);
@@ -836,10 +811,6 @@ void launch_compute_logits(
     CUDA_CHECK(cudaGetLastError());
 }
 
-// INT8 (W8A16) logits GEMV for quantized untied models (e.g. 7B). The LM head is
-// the largest single tensor streamed per decode step; reading it as INT8 instead
-// of FP16 halves that traffic. Dequant is inlined here (not via dot8) because in
-// an INT4 build dot8 unpacks nibbles, whereas the LM head is always INT8.
 __global__ void compute_logits_int8_kernel(
     const half* __restrict__ x_normed,
     const int8_t* __restrict__ lm_head_w,
@@ -927,9 +898,6 @@ void launch_apply_repetition_penalty(
     CUDA_CHECK(cudaGetLastError());
 }
 
-// Pack (value, index) into one u64 so a single atomic/compare orders by logit
-// value first (via an order-preserving float->uint map) and breaks ties toward
-// the LOWEST index (index stored complemented), matching a conventional argmax.
 __device__ __forceinline__ unsigned long long argmax_pack(float v, int idx) {
     unsigned int fu  = __float_as_uint(v);
     unsigned int key = (fu & 0x80000000u) ? ~fu : (fu | 0x80000000u);

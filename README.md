@@ -81,20 +81,20 @@ This builds the image, starts the container, and drops you into a shell with ful
 ```bash
 python3 export_weights.py --model=<model_size> --quantization=<quant>
 ```
-where, `model_size` can be `0.5b`, `1.5b`, `3b` or `7b`, and `quant` can be `fp16` (default), `int8` or `int4`.
+where `model_size` is one of `0.5b`, `1.5b`, `3b`, `7b`, and `quant` is one of `fp16`, `int8`, `int4`. Both arguments are **required**.
 
 `--quantization=int8` / `int4` enables **weights-only quantization (W8A16 / W4A16)**: the linear-projection weights (`q/k/v/o_proj`, `gate/up/down_proj`) are stored quantized with per-group FP16 scales (128 weights per scale) and dequantized to FP16 in-kernel; `int4` additionally packs two weights per byte. Token embeddings / LM head, RMSNorm weights, biases, and the KV cache remain FP16. This shrinks the projection-weight footprint to roughly 1/2 (`int8`) or 1/4 (`int4`), e.g. Qwen2.5-3B fits comfortably in 8 GB VRAM where the FP16 model would not.
 
-2. **Build the Engine**: Specify the model size, target GPU compute architecture (e.g., `75` for RTX 2070, `86` for RTX 3090, `89` for RTX 4090), and — matching the exported weights — the precision.
+2. **Build the Engine**: Specify the model size, the precision, and the target GPU compute architecture (e.g., `75` for RTX 2070, `86` for RTX 3090, `89` for RTX 4090). All three are **required**.
 
 ```bash
 mkdir -p build
 cd build
-cmake -Dmodel=<model_size> -Dgpu_arch=<gpu_architecture> -Dquant=<quant> ..
+cmake -Dmodel=<model_size> -Dquant=<quant> -Dgpu_arch=<gpu_architecture> ..
 make -j$(nproc)
 cd ..
 ```
-where `quant` is `fp16` (default), `int8` or `int4`, and **must match the `--quantization` used during export** (the engine validates this against the binary header). Omitting `-Dquant` builds the FP16 engine.
+where `quant` is `fp16`, `int8` or `int4`, and **must match the `--quantization` used during export** (the engine validates this against the binary header).
 3. **Launch Interactive Chat**
 ```bash
 ./build/cuqwen
@@ -106,19 +106,19 @@ To run the internal benchmark suite measuring token generation latency across di
 
 1. **Export Model Weights:**
 ```bash
-python3 export_weights.py --model=<model_size>
+python3 export_weights.py --model=<model_size> --quantization=<quant>
 ```
-2. **Build and Run Benchmark Binary:**
+2. **Build and Run Benchmark Binary** (all three arguments are **required**, and `quant` must match the exported weights):
 ```bash
 cd benchmark
 mkdir -p build
 cd build
-cmake -Dmodel=<model_size> -Dgpu_arch=<gpu_architecture> ..
+cmake -Dmodel=<model_size> -Dquant=<quant> -Dgpu_arch=<gpu_architecture> ..
 make -j$(nproc)
 cd ..
 ./build/cuqwen_benchmark
 ```
-The `benchmark/` directory also has the scripts for `vLLM` and `Ollama` which were used to benchmark those inference engines. To run these benchmarking scripts please reffer [here](https://github.com/talhatahir-10xe/CuQwen/blob/main/benchmark/README.md) 
+The `benchmark/` directory also has the scripts used to benchmark `vLLM` and `llama.cpp`. To run these benchmarking scripts please refer [here](https://github.com/talhatahir-10xe/CuQwen/blob/main/benchmark/README.md).
 
 ## Roadmap & Future Work
 The following enhancements are planned for future development cycles:

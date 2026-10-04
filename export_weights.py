@@ -204,7 +204,7 @@ def write_int4(file_obj, arr: np.ndarray, group: int = QUANT_GROUP) -> int:
     return len(w_bytes) + len(s_bytes)
 
 
-def export_weights(model_dir: str, model_size: str, quant: str = "fp16"):
+def export_weights(model_dir: str, model_size: str, quant: str):
     os.makedirs(WEIGHTS_DIR, exist_ok=True)
     quant_tag    = quant
     quant_type   = QUANT_TYPE_ID[quant]
@@ -371,16 +371,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Export Qwen 2.5 PyTorch/Safetensors weights and tokenizer to binary format.")
     parser.add_argument("--model", type=str, required=True, choices=["0.5b", "1.5b", "3b", "7b"],
                         help="Model size variant to export (0.5b, 1.5b, 3b, 7b)")
-    parser.add_argument("--quantization", type=str, default="fp16", choices=["fp16", "int8", "int4"],
-                        help="Weight precision: 'fp16' (default), 'int8' (W8A16) or 'int4' (W4A16), weights-only")
+    parser.add_argument("--quantization", type=str, required=True, choices=["fp16", "int8", "int4"],
+                        help="Weight precision: 'fp16' (W16A16), 'int8' (W8A16) or 'int4' (W4A16), weights-only")
 
     if len(sys.argv) == 1:
         parser.print_help()
-        print("\nExample commands:")
-        print("  python3 export_weights.py --model=0.5b")
+        print("\nBoth --model and --quantization are required. Example commands:")
+        print("  python3 export_weights.py --model=0.5b --quantization=fp16")
         print("  python3 export_weights.py --model=1.5b --quantization=int8")
         print("  python3 export_weights.py --model=3b  --quantization=int4")
-        print("  python3 export_weights.py --model=7b")
+        print("  python3 export_weights.py --model=7b  --quantization=fp16")
         sys.exit(1)
 
     args = parser.parse_args()
