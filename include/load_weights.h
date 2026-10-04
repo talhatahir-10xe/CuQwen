@@ -43,7 +43,14 @@ struct QwenWeights {
     half* embed_tokens;                    // [vocab_size, dim]
     std::vector<LayerWeights> layers;      // [n_layers]
     half* norm_weight;                     // [dim]
-    half* lm_head_weight;                  // Pointer to embed_tokens (tied embeddings)
+    half* lm_head_weight;                  // FP16 LM head (or pointer to embed_tokens when tied)
+
+    // Optional INT8 (W8A16) LM head for quantized untied models (e.g. 7B). When
+    // `lm_head_quantized` is true the logits GEMV reads these instead of the
+    // FP16 `lm_head_weight`; one FP16 scale per QUANT_GROUP_SIZE weights.
+    bool       lm_head_quantized = false;
+    int8_t*    lm_head_q = nullptr;        // [vocab_size, dim]  (INT8)
+    half*      lm_head_scale = nullptr;    // [vocab_size, dim/QUANT_GROUP_SIZE]
 };
 
 // Loads binary weights into GPU VRAM and verifies configuration header

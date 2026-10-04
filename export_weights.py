@@ -253,16 +253,24 @@ def export_weights(model_dir: str, model_size: str, quant: str = "fp16"):
 
     reader = MultiShardSafetensors(model_dir)
 
+    # The LM head is the single largest tensor read every decode step. When it is
+    # a SEPARATE (untied) tensor and we are building a quantized model, store it
+    # INT8 (W8A16) too: this halves its per-token bandwidth with negligible logit
+    # error. Tied models reuse the (FP16) embedding table, so they are unaffected.
+    lm_head_is_int8 = is_quantized and reader.contains("lm_head") and not tie_word_embeddings
+    lm_head_fmt = QUANT_INT8 if lm_head_is_int8 else QUANT_FP16
+
     print_section(f"3. Serializing {quant.upper()} Binary Weights")
     total_bytes = 0
 
     with open(out_bin_path, "wb") as f:
-        # Header (256 bytes)
+        # Header (256 bytes). Field 10 (lm_head_fmt) flags the LM-head precision
+        # (0 = FP16/tied, 1 = INT8); older files have 0 here from zero padding.
         header = struct.pack(
-            "iiiiiiiiii",
+            "iiiiiiiiiii",
             MAGIC_NUMBER, vocab_size, dim, intermediate_size,
             n_layers, n_heads, n_kv_heads, head_dim, max_seq_len,
-            quant_type,
+            quant_type, lm_head_fmt,
         )
 
         f.write(header)
@@ -303,9 +311,12 @@ def export_weights(model_dir: str, model_size: str, quant: str = "fp16"):
         print("  │ [+] Exporting final model.norm.weight...")
         total_bytes += write_fp16(f, reader.get_tensor("model.norm.weight"))
 
-        # LM Head (FP16)
-        if reader.contains("lm_head") and not tie_word_embeddings:
-            print("  │ [+] Exporting lm_head.weight...")
+        # LM Head: INT8 for quantized untied models, else FP16 (or tied/skipped).
+        if lm_head_is_int8:
+            print("  │ [+] Exporting lm_head.weight (INT8, W8A16)...")
+            total_bytes += write_int8(f, reader.get_tensor("lm_head.weight"))
+        elif reader.contains("lm_head") and not tie_word_embeddings:
+            print("  │ [+] Exporting lm_head.weight (FP16)...")
             total_bytes += write_fp16(f, reader.get_tensor("lm_head.weight"))
         else:
             print("  │ [+] lm_head tied to embed_tokens — skipping duplicate export")

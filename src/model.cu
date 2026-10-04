@@ -160,10 +160,17 @@ static void qwen_forward_graph_body(
         dim, config.norm_eps, stream
     );
 
-    launch_compute_logits(
-        state.xb, weights.lm_head_weight, state.logits,
-        config.vocab_size, dim, stream
-    );
+    if (weights.lm_head_quantized) {
+        launch_compute_logits_int8(
+            state.xb, weights.lm_head_q, weights.lm_head_scale, state.logits,
+            config.vocab_size, dim, stream
+        );
+    } else {
+        launch_compute_logits(
+            state.xb, weights.lm_head_weight, state.logits,
+            config.vocab_size, dim, stream
+        );
+    }
 
     launch_apply_repetition_penalty(
         state.logits, state.d_history, state.d_history_len,

@@ -4,7 +4,8 @@
 #include <cuda_fp16.h>
 #include <cuda_fp16.hpp>
 #include "config.h"
-// ATTN_PARTITIONS and HEADS_PER_WARP tuning parameters live in config.h.
+// Performance tuning parameters (ATTN_PARTITIONS, GEMV_WARPS_PER_BLOCK, ...)
+// live in config.h, where each is documented with per-GPU guidance.
 
 // Head slots reserved per KV-head in the FlashDecoding partial buffers. It is
 // >= any supported kv_group (n_heads/n_kv_heads) and equals the 16-row WMMA
@@ -140,6 +141,18 @@ void launch_rmsnorm(
 void launch_compute_logits(
     const half* x_normed,
     const half* lm_head_weight,
+    half* logits,
+    int vocab_size,
+    int dim,
+    cudaStream_t stream = 0
+);
+
+// INT8 (W8A16) variant used when the LM head is stored quantized (untied
+// quantized models, e.g. 7B). Halves the per-token LM-head bandwidth.
+void launch_compute_logits_int8(
+    const half* x_normed,
+    const int8_t* lm_head_w,
+    const half* lm_head_scale,
     half* logits,
     int vocab_size,
     int dim,

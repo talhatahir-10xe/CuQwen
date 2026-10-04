@@ -9,53 +9,73 @@ union Vector128 {
 };
 
 // ---------------------------------------------------------------------------
-// Weight fetch + dequant helper shared by all GEMV-style kernels.
+// Fused weight-fetch + dequant + dot-product helper shared by all GEMV kernels.
 //
-// Loads 8 consecutive weights of chunk `c` from row `w_row` into `wh[4]`
-// (4 x half2), matching the 8-wide (float4-of-half) input vectorization used
-// throughout. This is the ONLY place FP16 vs INT8 weight handling differs, so
-// every kernel's FMA/reduction loop body stays identical across both builds.
+// Computes the dot product of 8 consecutive weights of chunk `c` from row
+// `w_row` with the 8 activations in `xh[4]` (4 x half2), matching the 8-wide
+// (float4-of-half) input vectorization used throughout. This is the ONLY place
+// FP16 vs INT8 vs INT4 weight handling differs, so every kernel's reduction
+// loop stays identical across builds.
+//
+// Accumulation is done entirely in FP32: quantized weights are dequantized
+// straight from int -> float (no intermediate FP16 round-trip), and the shared
+// per-group scale is applied ONCE to the 8-wide partial sum instead of to every
+// element. Both cut the per-element ALU work that bottlenecks the low-bit
+// (INT4/INT8) kernels, which read so few weight bytes they are dequant-bound
+// rather than memory-bound.
 //
 //   FP16 build : a single 128-bit __ldg of the half weights.
-//   INT8 build : a 64-bit __ldg of 8 INT8 weights, dequantized with the row's
-//                per-group FP16 scale (QUANT_GROUP_SIZE weights per scale, i.e.
-//                QUANT_GROUP_SIZE/8 = 16 chunks per group -> scale idx c>>4).
+//   INT8 build : a 64-bit __ldg of 8 INT8 weights + one FP16 group scale.
+//   INT4 build : a 32-bit __ldg of 8 packed INT4 weights + one FP16 group scale
+//                (QUANT_GROUP_SIZE weights per scale -> 16 chunks per group ->
+//                 scale idx c>>4).
 #if defined(QUANT_INT8)
-__device__ __forceinline__ void load_w8(
-    const int8_t* __restrict__ w_row, const half* __restrict__ srow, int c, half2 wh[4]
+__device__ __forceinline__ float dot8(
+    const int8_t* __restrict__ w_row, const half* __restrict__ srow, int c, const half2* xh
 ) {
     int2 raw = __ldg(reinterpret_cast<const int2*>(w_row) + c);   // 8 x int8 = 8 bytes
     const int8_t* b = reinterpret_cast<const int8_t*>(&raw);
     float s = __half2float(__ldg(srow + (c >> 4)));
+    float p = 0.0f;
     #pragma unroll
-    for (int k = 0; k < 4; ++k)
-        wh[k] = make_half2(__float2half((float)b[2 * k]     * s),
-                           __float2half((float)b[2 * k + 1] * s));
+    for (int k = 0; k < 4; ++k) {
+        p = __fmaf_rn((float)b[2 * k],     __half2float(xh[k].x),
+            __fmaf_rn((float)b[2 * k + 1], __half2float(xh[k].y), p));
+    }
+    return p * s;
 }
 #elif defined(QUANT_INT4)
-__device__ __forceinline__ void load_w8(
-    const int8_t* __restrict__ w_row, const half* __restrict__ srow, int c, half2 wh[4]
+__device__ __forceinline__ float dot8(
+    const int8_t* __restrict__ w_row, const half* __restrict__ srow, int c, const half2* xh
 ) {
     // 8 packed INT4 weights = 4 bytes -> one 32-bit coalesced load. Each byte
     // holds two weights (element 2k in the low nibble, 2k+1 in the high nibble).
     int raw = __ldg(reinterpret_cast<const int*>(w_row) + c);
     float s = __half2float(__ldg(srow + (c >> 4)));
+    float p = 0.0f;
     #pragma unroll
     for (int k = 0; k < 4; ++k) {
         int byte = (raw >> (8 * k)) & 0xFF;
-        int lo = ((byte & 0xF) ^ 0x8) - 0x8;   // sign-extend 4-bit nibble
+        int lo = ((byte & 0xF) ^ 0x8) - 0x8;        // sign-extend 4-bit nibble
         int hi = (((byte >> 4) & 0xF) ^ 0x8) - 0x8;
-        wh[k] = make_half2(__float2half((float)lo * s), __float2half((float)hi * s));
+        p = __fmaf_rn((float)lo, __half2float(xh[k].x),
+            __fmaf_rn((float)hi, __half2float(xh[k].y), p));
     }
+    return p * s;
 }
 #else
-__device__ __forceinline__ void load_w8(
-    const half* __restrict__ w_row, const half* /*srow*/, int c, half2 wh[4]
+__device__ __forceinline__ float dot8(
+    const half* __restrict__ w_row, const half* /*srow*/, int c, const half2* xh
 ) {
     float4 wf = __ldg(reinterpret_cast<const float4*>(w_row) + c);
-    const half2* p = reinterpret_cast<const half2*>(&wf);
+    const half2* wh = reinterpret_cast<const half2*>(&wf);
+    float p = 0.0f;
     #pragma unroll
-    for (int k = 0; k < 4; ++k) wh[k] = p[k];
+    for (int k = 0; k < 4; ++k) {
+        p = __fmaf_rn(__half2float(wh[k].x), __half2float(xh[k].x),
+            __fmaf_rn(__half2float(wh[k].y), __half2float(xh[k].y), p));
+    }
+    return p;
 }
 #endif
 
@@ -456,14 +476,7 @@ __global__ void fused_attn_block_kernel(
     float acc = 0.0f;
     for (int c = lane; c < vec_dim; c += 32) {
         float4 xf = x_g[c];               // shared across warps -> L2 resident
-        half2 wh[4];
-        load_w8(W_row, W_srow, c, wh);
-        const half2* xh = reinterpret_cast<const half2*>(&xf);
-        #pragma unroll
-        for (int k = 0; k < 4; ++k) {
-            acc = __fmaf_rn(__half2float(wh[k].x), __half2float(xh[k].x),
-                  __fmaf_rn(__half2float(wh[k].y), __half2float(xh[k].y), acc));
-        }
+        acc += dot8(W_row, W_srow, c, reinterpret_cast<const half2*>(&xf));
     }
 
     #pragma unroll
@@ -556,20 +569,9 @@ __global__ void fused_mlp_stage1_kernel(
 
     for (int c = lane; c < vec_dim; c += 32) {
         float4 xf = x_g[c];               // shared across warps -> L2 resident
-        half2 gh[4];
-        half2 uh[4];
-        load_w8(gate_row, gate_srow, c, gh);
-        load_w8(up_row,   up_srow,   c, uh);
         const half2* xh = reinterpret_cast<const half2*>(&xf);
-        #pragma unroll
-        for (int k = 0; k < 4; ++k) {
-            float x0 = __half2float(xh[k].x);
-            float x1 = __half2float(xh[k].y);
-            gate_acc = __fmaf_rn(__half2float(gh[k].x), x0,
-                       __fmaf_rn(__half2float(gh[k].y), x1, gate_acc));
-            up_acc   = __fmaf_rn(__half2float(uh[k].x), x0,
-                       __fmaf_rn(__half2float(uh[k].y), x1, up_acc));
-        }
+        gate_acc += dot8(gate_row, gate_srow, c, xh);
+        up_acc   += dot8(up_row,   up_srow,   c, xh);
     }
 
     #pragma unroll
@@ -601,7 +603,7 @@ void launch_fused_mlp_stage1(
 }
 
 
-constexpr int MLP2_WARPS_PER_BLOCK = GEMV_WARPS_PER_BLOCK;
+constexpr int MLP2_WARPS_PER_BLOCK = GEMV_WIDE_WARPS_PER_BLOCK;
 
 __global__ void fused_mlp_stage2_kernel(
     half* __restrict__ x,
@@ -626,14 +628,7 @@ __global__ void fused_mlp_stage2_kernel(
     float acc = 0.0f;
     for (int c = lane; c < vec_inter; c += 32) {
         float4 iv = inter_g[c];           // shared across warps -> L2 resident
-        half2 dh[4];
-        load_w8(down_row, down_srow, c, dh);
-        const half2* ih = reinterpret_cast<const half2*>(&iv);
-        #pragma unroll
-        for (int k = 0; k < 4; ++k) {
-            acc = __fmaf_rn(__half2float(dh[k].x), __half2float(ih[k].x),
-                  __fmaf_rn(__half2float(dh[k].y), __half2float(ih[k].y), acc));
-        }
+        acc += dot8(down_row, down_srow, c, reinterpret_cast<const half2*>(&iv));
     }
 
     #pragma unroll
@@ -658,7 +653,7 @@ void launch_fused_mlp_stage2(
 }
 
 
-constexpr int GEMV_ADD_WARPS_PER_BLOCK = GEMV_WARPS_PER_BLOCK;
+constexpr int GEMV_ADD_WARPS_PER_BLOCK = GEMV_WIDE_WARPS_PER_BLOCK;
 
 __global__ void gemv_add_fp16_kernel(
     const qweight_t* __restrict__ W,
@@ -683,14 +678,7 @@ __global__ void gemv_add_fp16_kernel(
     float acc = 0.0f;
     for (int c = lane; c < vec_cols; c += 32) {
         float4 inf = in_vec[c];           // shared across warps -> L2 resident
-        half2 wh[4];
-        load_w8(W_row, W_srow, c, wh);
-        const half2* ih = reinterpret_cast<const half2*>(&inf);
-        #pragma unroll
-        for (int k = 0; k < 4; ++k) {
-            acc = __fmaf_rn(__half2float(wh[k].x), __half2float(ih[k].x),
-                  __fmaf_rn(__half2float(wh[k].y), __half2float(ih[k].y), acc));
-        }
+        acc += dot8(W_row, W_srow, c, reinterpret_cast<const half2*>(&inf));
     }
 
     #pragma unroll
@@ -848,6 +836,63 @@ void launch_compute_logits(
     CUDA_CHECK(cudaGetLastError());
 }
 
+// INT8 (W8A16) logits GEMV for quantized untied models (e.g. 7B). The LM head is
+// the largest single tensor streamed per decode step; reading it as INT8 instead
+// of FP16 halves that traffic. Dequant is inlined here (not via dot8) because in
+// an INT4 build dot8 unpacks nibbles, whereas the LM head is always INT8.
+__global__ void compute_logits_int8_kernel(
+    const half* __restrict__ x_normed,
+    const int8_t* __restrict__ lm_head_w,
+    const half* __restrict__ lm_head_scale,
+    half* __restrict__ logits,
+    int vocab_size,
+    int dim
+) {
+    const int lane = threadIdx.x & 31;
+    const int v    = blockIdx.x * LOGITS_WARPS_PER_BLOCK + (threadIdx.x >> 5);
+    if (v >= vocab_size) return;
+
+    const int vec_dim = dim / 8;
+    const int grp_dim = dim / QUANT_GROUP_SIZE;
+    const float4* x_g   = reinterpret_cast<const float4*>(x_normed);
+    const int8_t* w_row = lm_head_w + (size_t)v * dim;
+    const half*   s_row = lm_head_scale + (size_t)v * grp_dim;
+
+    float acc = 0.0f;
+    for (int c = lane; c < vec_dim; c += 32) {
+        float4 xf = x_g[c];
+        const half2* xh = reinterpret_cast<const half2*>(&xf);
+        int2 raw = __ldg(reinterpret_cast<const int2*>(w_row) + c);   // 8 x int8
+        const int8_t* b = reinterpret_cast<const int8_t*>(&raw);
+        float s = __half2float(__ldg(s_row + (c >> 4)));
+        float p = 0.0f;
+        #pragma unroll
+        for (int k = 0; k < 4; ++k)
+            p = __fmaf_rn((float)b[2 * k],     __half2float(xh[k].x),
+                __fmaf_rn((float)b[2 * k + 1], __half2float(xh[k].y), p));
+        acc += p * s;
+    }
+
+    #pragma unroll
+    for (int off = 16; off > 0; off >>= 1)
+        acc += __shfl_down_sync(0xffffffff, acc, off);
+
+    if (lane == 0)
+        logits[v] = __float2half(acc);
+}
+
+void launch_compute_logits_int8(
+    const half* x_normed, const int8_t* lm_head_w, const half* lm_head_scale,
+    half* logits, int vocab_size, int dim, cudaStream_t stream
+) {
+    int threads = LOGITS_WARPS_PER_BLOCK * 32;
+    int blocks  = (vocab_size + LOGITS_WARPS_PER_BLOCK - 1) / LOGITS_WARPS_PER_BLOCK;
+    compute_logits_int8_kernel<<<blocks, threads, 0, stream>>>(
+        x_normed, lm_head_w, lm_head_scale, logits, vocab_size, dim
+    );
+    CUDA_CHECK(cudaGetLastError());
+}
+
 __global__ void repetition_penalty_kernel(
     half* logits,
     const int* d_history,
@@ -882,64 +927,61 @@ void launch_apply_repetition_penalty(
     CUDA_CHECK(cudaGetLastError());
 }
 
-__global__ void argmax_kernel(const half* logits, int* out_token, int vocab_size) {
-    int tid = threadIdx.x;
-    float thread_max_val = -1e9f;
-    int thread_max_idx = 0;
+// Pack (value, index) into one u64 so a single atomic/compare orders by logit
+// value first (via an order-preserving float->uint map) and breaks ties toward
+// the LOWEST index (index stored complemented), matching a conventional argmax.
+__device__ __forceinline__ unsigned long long argmax_pack(float v, int idx) {
+    unsigned int fu  = __float_as_uint(v);
+    unsigned int key = (fu & 0x80000000u) ? ~fu : (fu | 0x80000000u);
+    return ((unsigned long long)key << 32) | (unsigned int)(~idx);
+}
 
-    #pragma unroll 4
-    for (int i = tid; i < vocab_size; i += blockDim.x) {
-        float val = __half2float(logits[i]);
-        if (val > thread_max_val) {
-            thread_max_val = val;
-            thread_max_idx = i;
-        }
+// ARGMAX_BLOCKS / ARGMAX_THREADS are defined in config.h (tunable per GPU).
+
+__global__ void argmax_stage1_kernel(const half* __restrict__ logits,
+                                     unsigned long long* __restrict__ block_best,
+                                     int vocab_size) {
+    unsigned long long best = 0ULL;
+    for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < vocab_size;
+         i += gridDim.x * blockDim.x) {
+        unsigned long long p = argmax_pack(__half2float(logits[i]), i);
+        if (p > best) best = p;
     }
-
-    #pragma unroll
-    for (int offset = 16; offset > 0; offset /= 2) {
-        float other_val = __shfl_down_sync(0xffffffff, thread_max_val, offset);
-        int other_idx   = __shfl_down_sync(0xffffffff, thread_max_idx, offset);
-        if (other_val > thread_max_val) {
-            thread_max_val = other_val;
-            thread_max_idx = other_idx;
-        }
-    }
-
-    __shared__ float s_max_vals[32];
-    __shared__ int   s_max_indices[32];
-
-    int lane = tid % 32;
-    int warp_id = tid / 32;
-
-    if (lane == 0) {
-        s_max_vals[warp_id]    = thread_max_val;
-        s_max_indices[warp_id] = thread_max_idx;
-    }
+    __shared__ unsigned long long s[ARGMAX_THREADS];
+    s[threadIdx.x] = best;
     __syncthreads();
-
-    if (warp_id == 0) {
-        float val = (tid < blockDim.x / 32) ? s_max_vals[lane] : -1e9f;
-        int idx   = (tid < blockDim.x / 32) ? s_max_indices[lane] : 0;
-
-        #pragma unroll
-        for (int offset = 16; offset > 0; offset /= 2) {
-            float other_val = __shfl_down_sync(0xffffffff, val, offset);
-            int other_idx   = __shfl_down_sync(0xffffffff, idx, offset);
-            if (other_val > val) {
-                val = other_val;
-                idx = other_idx;
-            }
-        }
-
-        if (tid == 0) {
-            *out_token = idx;
-        }
+    for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
+        if (threadIdx.x < stride && s[threadIdx.x + stride] > s[threadIdx.x])
+            s[threadIdx.x] = s[threadIdx.x + stride];
+        __syncthreads();
     }
+    if (threadIdx.x == 0) block_best[blockIdx.x] = s[0];
+}
+
+__global__ void argmax_stage2_kernel(const unsigned long long* __restrict__ block_best,
+                                     int* __restrict__ out_token, int n) {
+    unsigned long long best = 0ULL;
+    for (int i = threadIdx.x; i < n; i += blockDim.x)
+        if (block_best[i] > best) best = block_best[i];
+    __shared__ unsigned long long s[ARGMAX_BLOCKS];
+    s[threadIdx.x] = best;
+    __syncthreads();
+    for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
+        if (threadIdx.x < stride && s[threadIdx.x + stride] > s[threadIdx.x])
+            s[threadIdx.x] = s[threadIdx.x + stride];
+        __syncthreads();
+    }
+    if (threadIdx.x == 0)
+        *out_token = (int)(~((unsigned int)(s[0] & 0xffffffffu)));
 }
 
 void launch_argmax(const half* logits, int* d_sampled_token, int vocab_size, cudaStream_t stream) {
-    int threads = 256;
-    argmax_kernel<<<1, threads, 0, stream>>>(logits, d_sampled_token, vocab_size);
+    static unsigned long long* g_block_best = nullptr;
+    if (!g_block_best)
+        CUDA_CHECK(cudaMalloc(&g_block_best, ARGMAX_BLOCKS * sizeof(unsigned long long)));
+    argmax_stage1_kernel<<<ARGMAX_BLOCKS, ARGMAX_THREADS, 0, stream>>>(
+        logits, g_block_best, vocab_size);
+    argmax_stage2_kernel<<<1, ARGMAX_BLOCKS, 0, stream>>>(
+        g_block_best, d_sampled_token, ARGMAX_BLOCKS);
     CUDA_CHECK(cudaGetLastError());
 }

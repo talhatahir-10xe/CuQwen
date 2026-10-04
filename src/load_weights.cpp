@@ -40,12 +40,16 @@ QwenConfig load_weights(const std::string& bin_path, QwenWeights& weights) {
         exit(EXIT_FAILURE);
     }
 
-    int32_t header[10] = {0};
-    if (fread(header, sizeof(int32_t), 10, f) != 10) {
+    // Fields 0..9 are the model/quant config; field 10 is the LM-head format
+    // (0 = FP16/tied, 1 = INT8). Older binaries lack field 10 but the 256-byte
+    // header is zero-padded, so it reads back as 0 (FP16) for them.
+    int32_t header[11] = {0};
+    if (fread(header, sizeof(int32_t), 11, f) != 11) {
         std::cerr << "[!] Error: Failed to read binary weight header!" << std::endl;
         fclose(f);
         exit(EXIT_FAILURE);
     }
+    const int lm_head_fmt = header[10];   // 0 = FP16/tied, 1 = INT8
 
     if (header[0] != QwenConfig::magic) {
         std::cerr << "[!] Error: Magic number mismatch! Expected 0x" << std::hex << QwenConfig::magic
@@ -132,18 +136,28 @@ QwenConfig load_weights(const std::string& bin_path, QwenWeights& weights) {
     weights.norm_weight = alloc_gpu<half>(f, dim);
     std::cout << " Done." << std::endl;
 
-    long cur = ftell(f);
-    fseek(f, 0, SEEK_END);
-    long end = ftell(f);
-    fseek(f, cur, SEEK_SET);
-
-    if ((size_t)(end - cur) >= (size_t)config.vocab_size * dim * sizeof(half)) {
-        std::cout << "  [+] Loading separate lm_head.weight..." << std::flush;
-        weights.lm_head_weight = alloc_gpu<half>(f, (size_t)config.vocab_size * dim);
+    if (lm_head_fmt == 1) {
+        // INT8 (W8A16) separate LM head: [int8 weights][FP16 group scales].
+        std::cout << "  [+] Loading separate lm_head.weight (INT8, W8A16)..." << std::flush;
+        weights.lm_head_q     = alloc_gpu<int8_t>(f, (size_t)config.vocab_size * dim);
+        weights.lm_head_scale = alloc_gpu<half>(f, (size_t)config.vocab_size * (dim / QUANT_GROUP_SIZE));
+        weights.lm_head_quantized = true;
+        weights.lm_head_weight = nullptr;
         std::cout << " Done." << std::endl;
     } else {
-        std::cout << "  [+] lm_head is tied to embed_tokens (reusing pointer)." << std::endl;
-        weights.lm_head_weight = weights.embed_tokens;
+        long cur = ftell(f);
+        fseek(f, 0, SEEK_END);
+        long end = ftell(f);
+        fseek(f, cur, SEEK_SET);
+
+        if ((size_t)(end - cur) >= (size_t)config.vocab_size * dim * sizeof(half)) {
+            std::cout << "  [+] Loading separate lm_head.weight (FP16)..." << std::flush;
+            weights.lm_head_weight = alloc_gpu<half>(f, (size_t)config.vocab_size * dim);
+            std::cout << " Done." << std::endl;
+        } else {
+            std::cout << "  [+] lm_head is tied to embed_tokens (reusing pointer)." << std::endl;
+            weights.lm_head_weight = weights.embed_tokens;
+        }
     }
 
     fclose(f);
@@ -181,4 +195,6 @@ void free_weights(QwenWeights& weights, const QwenConfig& config) {
     if (weights.lm_head_weight != nullptr && weights.lm_head_weight != weights.embed_tokens) {
         CUDA_CHECK(cudaFree(weights.lm_head_weight));
     }
+    if (weights.lm_head_q != nullptr)     CUDA_CHECK(cudaFree(weights.lm_head_q));
+    if (weights.lm_head_scale != nullptr) CUDA_CHECK(cudaFree(weights.lm_head_scale));
 }
