@@ -2,21 +2,38 @@
 
 ![CuQwen](/assets/CuQwen.jpeg)
 
-***Note: This is the current working branch for the next release in which I'm working on supporting int8 and int4 weights only quantization for the current models in CuQwen (W8A16 and W4A16)***
+***Note: Release 1.2 adds weights-only `int8` (W8A16) and `int4` (W4A16) quantization for all supported Qwen2.5 models, on top of the long-context decode path from release 1.1.***
 
 CuQwen is a C++/CUDA inference engine written purely from scratch to explore the theoretical performance limits of single-user (```Batch Size 1```) autoregressive token generation using optimized custom CUDA kernels for open source Qwen models that can run on local edge devices for Nvidia GPUs.
 
 ## Performance
-Average inference speed (tokens/second) for **Qwen2.5 Instruct model** across 32K context window on RTX 3090 
+Average decode speed (tokens/second) for the **Qwen2.5 Instruct** models across the 32K context window on an RTX 3090, in each supported weights-only precision. CuQwen posts the highest average throughput in every configuration.
 
-| Model Size | CuQwen | vLLM | Ollama |
-| ---------- | ------ | ---- | ------ |
-| 0.5b       |   462  | 398  | 355    |
-| 1.5b       |   203  | 172  | 139    |
-| 3b         |   113  | 101  | 106    |
-| 7b         |   55   | 48   | 54     |
+Each engine column is split into the three weights-only precisions (**FP16** W16A16, **INT8** W8A16, **INT4** W4A16). CuQwen values are **bold**.
 
-Complete benchmarking results and details can be found [here](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.1_BENCHMARK.md).
+<table>
+  <thead>
+    <tr>
+      <th rowspan="2" align="left">Model</th>
+      <th colspan="3" align="center">CuQwen</th>
+      <th colspan="3" align="center">vLLM</th>
+      <th colspan="3" align="center">llama.cpp</th>
+    </tr>
+    <tr>
+      <th align="center">FP16</th><th align="center">INT8</th><th align="center">INT4</th>
+      <th align="center">FP16</th><th align="center">INT8</th><th align="center">INT4</th>
+      <th align="center">FP16</th><th align="center">INT8</th><th align="center">INT4</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>0.5b</td><td align="center"><b>506</b></td><td align="center"><b>603</b></td><td align="center"><b>664</b></td><td align="center">403</td><td align="center">432</td><td align="center">478</td><td align="center">387</td><td align="center">490</td><td align="center">536</td></tr>
+    <tr><td>1.5b</td><td align="center"><b>209</b></td><td align="center"><b>296</b></td><td align="center"><b>364</b></td><td align="center">171</td><td align="center">236</td><td align="center">286</td><td align="center">186</td><td align="center">265</td><td align="center">340</td></tr>
+    <tr><td>3b</td><td align="center"><b>115</b></td><td align="center"><b>176</b></td><td align="center"><b>236</b></td><td align="center">100</td><td align="center">148</td><td align="center">193</td><td align="center">108</td><td align="center">165</td><td align="center">225</td></tr>
+    <tr><td>7b</td><td align="center"><b>55</b></td><td align="center"><b>95</b></td><td align="center"><b>144</b></td><td align="center">48</td><td align="center">85</td><td align="center">125</td><td align="center">53</td><td align="center">91</td><td align="center">138</td></tr>
+  </tbody>
+</table>
+
+Complete benchmarking results and details can be found [here](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.2_BENCHMARK.md).
 
 ## Supported Models
 
@@ -124,7 +141,7 @@ The `benchmark/` directory also has the scripts used to benchmark `vLLM` and `ll
 The following enhancements are planned for future development cycles:
 
 * **Optimized Prefill Kernels:** Implement parallel prefill kernels to process prompt tokens in parallel rather than using the single-token autoregressive decode path for prefill stage.
-* **Weight Quantization:** Add low-precision INT8 and INT4 (W8A16/W4A16) quantization.
+* **Weight Quantization:** Add low-precision INT8 and INT4 (W8A16/W4A16) quantization. ✅ *Done in release 1.2 — weights-only INT8/INT4 for all model sizes; see the [Release 1.2 Benchmark](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.2_BENCHMARK.md).*
 * **KV-Cache Quantization:** Support INT8/FP8 KV-cache quantization to cut attention memory bandwidth usage during long-context generation.
 * **Modern Microarchitecture Tuning:** Extend custom kernel implementations for NVIDIA Hopper (`sm_90`) and Blackwell (`sm_100`) architectures utilizing `TMA` (Tensor Memory Accelerator), `DSMEM` (Distributed Shared memory) and `DPX` instructions.
 * **Long-Context Throughput Optimization:** Further mitigate throughput decay across extended sequence lengths. ✅ *Done in release 1.1 — throughput decay across the 32K context window was cut roughly in half; see the [Release 1.1 Optimization](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.1_OPTIMIZATION.md) document.*
@@ -136,3 +153,4 @@ The following enhancements are planned for future development cycles:
 * [**Release 1.0 Optimization Journey**](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.0_OPTIMIZATION_JOURNEY.md): The complete journey of the different optimizations used in the process of implementing CuQwen 1.0
 * [**Release 1.1 Benchmark**](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.1_BENCHMARK.md): Benchmarking details and results of CuQwen 1.1 vs vLLM and Ollama across the extended 32K context window
 * [**Release 1.1 Optimization**](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.1_OPTIMIZATION.md): The long-context optimizations applied in CuQwen 1.1 to reduce throughput decay over CuQwen 1.0
+* [**Release 1.2 Benchmark**](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.2_BENCHMARK.md): Benchmarking details and results of CuQwen 1.2 vs vLLM and llama.cpp across FP16/INT8/INT4 weights and the 32K context window

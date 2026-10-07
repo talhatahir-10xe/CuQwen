@@ -12,8 +12,7 @@ CuQwen/benchmark/
 ├── cuqwen_benchmark.cu    # Native CuQwen decode-throughput benchmark
 ├── kernel_profile.cu      # Per-kernel profiling harness
 ├── bench_vllm.py          # vLLM decode benchmark (FlashAttention + CUDA graphs)
-├── bench_llamacpp.py      # llama.cpp decode benchmark (wraps native llama-bench)
-└── hf_benchmark.py        # Baseline Hugging Face Transformers benchmark
+└── bench_llamacpp.py      # llama.cpp decode benchmark (wraps native llama-bench)
 ```
 
 ## 1. CuQwen Benchmark
@@ -113,11 +112,9 @@ cmake --build llama.cpp/build --target llama-bench -j
 # vLLM — Qwen2.5-3B, 4-bit weights
 python3 bench_vllm.py --model 3b --quant int4
 
-# llama.cpp — Qwen2.5-3B, fp16
-python3 bench_llamacpp.py --model 3b --quant fp16
+# llama.cpp — Qwen2.5-7B, fp16
+python3 bench_llamacpp.py --model 7b --quant fp16
 ```
-
-> **Note:** run one configuration at a time. Weights are cached under `~/.cache/huggingface`; if disk is tight, clear it between runs with `rm -rf ~/.cache/huggingface/hub` (the HF cache keeps data in a flat `hub/blobs/` directory, so deleting only the per-model folder does not reclaim the space), or point it at a larger volume with `export HF_HOME=/big/disk/hf`.
 
 ### What is Measured
 
@@ -130,6 +127,6 @@ python3 bench_llamacpp.py --model 3b --quant fp16
 
 ## Comprehensive Benchmark Results
 
-For full chart breakdowns and trade-off analysis across all four model sizes (`0.5B`, `1.5B`, `3B`, `7B`), refer to the main documentation:
+For the full per-depth data, averages, speedups, and decay analysis across all four model sizes (`0.5B`, `1.5B`, `3B`, `7B`) and all three precisions (`FP16`, `INT8`, `INT4`), refer to the main documentation:
 
-👉 [**CuQwen Benchmark Strategy & Analysis (RELEASE_1.1_BENCHMARK.md)**](../docs/RELEASE_1.1_BENCHMARK.md)
+👉 [**CuQwen 1.2 Benchmark Analysis (RELEASE_1.2_BENCHMARK.md)**](../docs/RELEASE_1.2_BENCHMARK.md)
