@@ -6,14 +6,14 @@ This document covers the optimization work done in **CuQwen 1.1**, whose single 
 
 ## The Problem: CuQwen 1.0 Fell Behind on Long Contexts
 
-CuQwen 1.0 was the fastest engine on short-to-medium sequences, but its generation speed dropped off faster than the competition as the context grew. Once the context window stretched toward 32K tokens, that steeper slope let both vLLM and llama.cpp catch up and, in several cases, overtake CuQwen 1.0.
+CuQwen 1.0 was the fastest engine on short-to-medium sequences, but its generation speed dropped off faster than the competition as the context grew. Once the context window stretched toward 32K tokens, that steeper slope let vLLM catch up and, in several cases, overtake CuQwen 1.0.
 
 The two charts below were recorded on an **NVIDIA RTX 3090** across a **32K context window** and make the issue clear.
 
 ### Throughput vs. Context Length (CuQwen 1.0)
 ![CuQwen 1.0 Throughput vs Context](../assets/Release1.1_Optimization/CuQwen1_0_benchmark_comparison.png)
 
-CuQwen 1.0 (blue) launches ahead on every model size, but its curve descends more steeply than vLLM and llama.cpp. By the far end of the 32K window it has crossed under one or both competitors on the `0.5B`, `3B`, and `7B` models — exactly where a long-context engine needs to stay ahead.
+CuQwen 1.0 (blue) launches ahead on every model size, but its curve descends more steeply than vLLM. By the far end of the 32K window it has crossed under vLLM on the `0.5B`, `3B`, and `7B` models — exactly where a long-context engine needs to stay ahead.
 
 ### Performance Decay Rate (CuQwen 1.0)
 ![CuQwen 1.0 Decay Rate](../assets/Release1.1_Optimization/CuQwen1_0_decay_rate.png)
@@ -57,4 +57,4 @@ The decay rate over the 1K → 32K window drops sharply across the board:
 
 CuQwen 1.1 nearly halves the throughput decay on the smaller models and cuts it substantially on the larger ones. This brings CuQwen's long-context decay in line with — and on the `1.5B` and `3B` models, better than — vLLM, so CuQwen now keeps its early-context speed advantage all the way out to 32K.
 
-For the full head-to-head benchmarks of CuQwen 1.1 against vLLM and llama.cpp, see the [CuQwen 1.1 Benchmark](https://github.com/talhatahir-10xe/CuQwen/blob/release1.2/docs/RELEASE_1.1_BENCHMARK.md).
+For the full head-to-head benchmarks of CuQwen 1.1 against vLLM, see the [CuQwen 1.1 Benchmark](https://github.com/talhatahir-10xe/CuQwen/blob/release1.2/docs/RELEASE_1.1_BENCHMARK.md).
