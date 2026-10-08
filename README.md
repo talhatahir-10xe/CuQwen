@@ -33,7 +33,7 @@ Each engine column is split into the three weights-only precisions (**FP16** W16
   </tbody>
 </table>
 
-Complete benchmarking results and details can be found [here](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.2_BENCHMARK.md).
+Complete benchmarking results and details can be found [here](https://github.com/talhatahir-10xe/CuQwen/blob/release1.2/docs/RELEASE_1.2_BENCHMARK.md).
 
 ## Supported Models
 
@@ -51,7 +51,7 @@ Quantizied models and latest Qwen model series (`Qwen 3.0`, `3.5`, `3.6`, `3.7` 
 ```text
 CuQwen/
 ├── assets/
-├── benchmark/            # Head-to-head benchmarking vs. production engines (ollama and vllm)
+├── benchmark/            # Head-to-head benchmarking vs. production engines (llama.cpp and vLLM)
 ├── CMakeLists.txt        # Top-level C++ build configuration
 ├── cuda_optimizations/   # Incremental CuQwen optimization journey
 ├── Dockerfile            # Container definition for reproducible environments
@@ -135,23 +135,23 @@ make -j$(nproc)
 cd ..
 ./build/cuqwen_benchmark
 ```
-The `benchmark/` directory also has the scripts used to benchmark `vLLM` and `llama.cpp`. To run these benchmarking scripts please refer [here](https://github.com/talhatahir-10xe/CuQwen/blob/main/benchmark/README.md).
+The `benchmark/` directory also has the scripts used to benchmark `vLLM` and `llama.cpp`. To run these benchmarking scripts please refer [here](https://github.com/talhatahir-10xe/CuQwen/blob/release1.2/benchmark/README.md).
 
 ## Roadmap & Future Work
 The following enhancements are planned for future development cycles:
 
 * **Optimized Prefill Kernels:** Implement parallel prefill kernels to process prompt tokens in parallel rather than using the single-token autoregressive decode path for prefill stage.
-* **Weight Quantization:** Add low-precision INT8 and INT4 (W8A16/W4A16) quantization. ✅ *Done in release 1.2 — weights-only INT8/INT4 for all model sizes; see the [Release 1.2 Benchmark](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.2_BENCHMARK.md).*
+* **Weight Quantization:** Add low-precision INT8 and INT4 (W8A16/W4A16) quantization. ✅ *Done in release 1.2 — weights-only INT8/INT4 for all model sizes; see the [Release 1.2 Benchmark](https://github.com/talhatahir-10xe/CuQwen/blob/release1.2/docs/RELEASE_1.2_BENCHMARK.md).*
 * **KV-Cache Quantization:** Support INT8/FP8 KV-cache quantization to cut attention memory bandwidth usage during long-context generation.
 * **Modern Microarchitecture Tuning:** Extend custom kernel implementations for NVIDIA Hopper (`sm_90`) and Blackwell (`sm_100`) architectures utilizing `TMA` (Tensor Memory Accelerator), `DSMEM` (Distributed Shared memory) and `DPX` instructions.
-* **Long-Context Throughput Optimization:** Further mitigate throughput decay across extended sequence lengths. ✅ *Done in release 1.1 — throughput decay across the 32K context window was cut roughly in half; see the [Release 1.1 Optimization](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.1_OPTIMIZATION.md) document.*
+* **Long-Context Throughput Optimization:** Further mitigate throughput decay across extended sequence lengths. ✅ *Done in release 1.1 — throughput decay across the 32K context window was cut roughly in half; see the [Release 1.1 Optimization](https://github.com/talhatahir-10xe/CuQwen/blob/release1.2/docs/RELEASE_1.1_OPTIMIZATION.md) document.*
 * **Support for Newer Qwen Architecture Series:** Add native kernel and engine support for newer iterations in the Qwen family, including Qwen 3.0, Qwen 3.5, and Qwen 3.8 models.
 
 ## Documentation
 
-* [**Release 1.0 Benchmark**](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.0_BENCHMARK.md): Benchmarking details and results of CuQwen 1.0 vs vLLM and Ollama
-* [**Release 1.0 Optimization Journey**](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.0_OPTIMIZATION_JOURNEY.md): The complete journey of the different optimizations used in the process of implementing CuQwen 1.0
-* [**Release 1.1 Benchmark**](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.1_BENCHMARK.md): Benchmarking details and results of CuQwen 1.1 vs vLLM and Ollama across the extended 32K context window
-* [**Release 1.1 Optimization**](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.1_OPTIMIZATION.md): The long-context optimizations applied in CuQwen 1.1 to reduce throughput decay over CuQwen 1.0
-* [**Release 1.2 Benchmark**](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.2_BENCHMARK.md): Benchmarking details and results of CuQwen 1.2 vs vLLM and llama.cpp across FP16/INT8/INT4 weights and the 32K context window
-* [**Release 1.2 Optimization**](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.2_OPTIMIZATION.md): The weights-only INT8/INT4 quantization and decode-path kernel optimizations added in CuQwen 1.2 over CuQwen 1.1
+* [**Release 1.0 Benchmark**](https://github.com/talhatahir-10xe/CuQwen/blob/release1.2/docs/RELEASE_1.0_BENCHMARK.md): Benchmarking details and results of CuQwen 1.0 vs vLLM and llama.cpp
+* [**Release 1.0 Optimization Journey**](https://github.com/talhatahir-10xe/CuQwen/blob/release1.2/docs/RELEASE_1.0_OPTIMIZATION_JOURNEY.md): The complete journey of the different optimizations used in the process of implementing CuQwen 1.0
+* [**Release 1.1 Benchmark**](https://github.com/talhatahir-10xe/CuQwen/blob/release1.2/docs/RELEASE_1.1_BENCHMARK.md): Benchmarking details and results of CuQwen 1.1 vs vLLM and llama.cpp across the extended 32K context window
+* [**Release 1.1 Optimization**](https://github.com/talhatahir-10xe/CuQwen/blob/release1.2/docs/RELEASE_1.1_OPTIMIZATION.md): The long-context optimizations applied in CuQwen 1.1 to reduce throughput decay over CuQwen 1.0
+* [**Release 1.2 Benchmark**](https://github.com/talhatahir-10xe/CuQwen/blob/release1.2/docs/RELEASE_1.2_BENCHMARK.md): Benchmarking details and results of CuQwen 1.2 vs vLLM and llama.cpp across FP16/INT8/INT4 weights and the 32K context window
+* [**Release 1.2 Optimization**](https://github.com/talhatahir-10xe/CuQwen/blob/release1.2/docs/RELEASE_1.2_OPTIMIZATION.md): The weights-only INT8/INT4 quantization and decode-path kernel optimizations added in CuQwen 1.2 over CuQwen 1.1

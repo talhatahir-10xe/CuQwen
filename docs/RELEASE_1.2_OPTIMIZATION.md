@@ -2,7 +2,7 @@
 
 Where CuQwen 1.1 was a single-goal release (flatten long-context throughput decay), **CuQwen 1.2** has two threads of work: it adds **weights-only INT8/INT4 quantization**, and it tunes the decode path so the quantized kernels — and the FP16 path — run faster and port cleanly across GPUs. All of the 1.1 long-context work (fixed-partition FlashDecoding, Tensor-core attention, GQA-aware head grouping) is carried forward unchanged.
 
-For the head-to-head throughput, speedup, and decay results these changes produce, see the [CuQwen 1.2 Benchmark](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.2_BENCHMARK.md).
+For the head-to-head throughput, speedup, and decay results these changes produce, see the [CuQwen 1.2 Benchmark](https://github.com/talhatahir-10xe/CuQwen/blob/release1.2/docs/RELEASE_1.2_BENCHMARK.md).
 
 ---
 
@@ -36,4 +36,4 @@ Both cut the per-element ALU work that bottlenecks the low-bit kernels: INT4/INT
 
 ---
 
-These changes make quantized CuQwen fast rather than merely smaller, while giving the FP16 path a modest lift on the largest model and a cleaner sampling tail. The resulting throughput across FP16/INT8/INT4 and the full 32K window is documented in the [CuQwen 1.2 Benchmark](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.2_BENCHMARK.md).
+These changes make quantized CuQwen fast rather than merely smaller, while giving the FP16 path a modest lift on the largest model and a cleaner sampling tail. The resulting throughput across FP16/INT8/INT4 and the full 32K window is documented in the [CuQwen 1.2 Benchmark](https://github.com/talhatahir-10xe/CuQwen/blob/release1.2/docs/RELEASE_1.2_BENCHMARK.md).

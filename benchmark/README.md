@@ -121,7 +121,7 @@ python3 bench_llamacpp.py --model 7b --quant fp16
 - **Decode only.** Prefill is excluded on both engines, so the number is steady-state tokens/s at that context depth, not end-to-end latency.
 - **Batch = 1** (single stream) — the regime this suite targets; vLLM's continuous batching is not exercised here.
 - **FP16 KV cache** on both. Weight-only quantization: GPTQ (vLLM) and Q4_0/Q8_0 (llama.cpp).
-- `bench_llamacpp.py` measures the native `llama-bench` directly. Running the same GGUF through the **Ollama** server was ~2× slower (serving-layer overhead), so llama.cpp is benchmarked directly for a fair engine comparison.
+- `bench_llamacpp.py` measures the native `llama-bench` directly (CUDA graphs + FlashAttention, all layers on GPU) — llama.cpp's fastest single-stream decode path, for a fair engine-to-engine comparison.
 
 ---
 

@@ -2,7 +2,7 @@
 
 This document details the benchmarking methodology, hardware configuration, and performance analysis comparing **CuQwen 1.2** against industry-standard inference frameworks (**vLLM** and **llama.cpp**) across the full 32K context window, in all three supported weight precisions: **FP16 (W16A16)**, **INT8 (W8A16)**, and **INT4 (W4A16)**.
 
-> Release 1.2 adds weights-only INT8/INT4 quantization on top of the long-context decode path introduced in 1.1. For the earlier long-context work, see the [CuQwen 1.1 Benchmark](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.1_BENCHMARK.md) and [CuQwen 1.1 Optimization](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.1_OPTIMIZATION.md) documents.
+> Release 1.2 adds weights-only INT8/INT4 quantization on top of the long-context decode path introduced in 1.1. For the earlier long-context work, see the [CuQwen 1.1 Benchmark](https://github.com/talhatahir-10xe/CuQwen/blob/release1.2/docs/RELEASE_1.1_BENCHMARK.md) and [CuQwen 1.1 Optimization](https://github.com/talhatahir-10xe/CuQwen/blob/release1.2/docs/RELEASE_1.1_OPTIMIZATION.md) documents.
 
 ---
 
