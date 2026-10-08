@@ -7,3 +7,14 @@
 # CMake build directories
 build/
 **/build/
+
+# CuQwen Weights directory
+weights/
+**/weights/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local benchmarking setup notes (content folded into benchmark/README.md)
+benchmark/setup.md

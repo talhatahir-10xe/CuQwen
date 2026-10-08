@@ -6,12 +6,12 @@ set(CMAKE_CUDA_STANDARD 17)
 
 # 1. Compulsory Input: -Dmodel=<0.5b|1.5b|3b|7b>
 if(NOT DEFINED model)
-    message(FATAL_ERROR 
+    message(FATAL_ERROR
         "\n[!] Error: 'model' variable is compulsory.\n"
         "Please specify model size using -Dmodel=<size>.\n"
         "Available options: 0.5b, 1.5b, 3b, 7b\n"
         "Example:\n"
-        "  cmake -Dmodel=0.5b -Dgpu_arch=75 ..\n"
+        "  cmake -Dmodel=0.5b -Dquant=fp16 -Dgpu_arch=75 ..\n"
     )
 endif()
 
@@ -33,15 +33,45 @@ else()
     message(FATAL_ERROR "Invalid model option '${model}'. Options are: 0.5b, 1.5b, 3b, 7b")
 endif()
 
+# 1b. Compulsory Input: -Dquant=<fp16|int8|int4>
+#     int8/int4 = weights-only quantization (W8A16/W4A16): linear-projection
+#     weights are stored/loaded quantized + FP16 group scales and dequantized
+#     in-kernel. int4 additionally packs 2 weights per byte.
+#     Must match the --quantization used by export_weights.py.
+if(NOT DEFINED quant)
+    message(FATAL_ERROR
+        "\n[!] Error: 'quant' variable is compulsory.\n"
+        "Please specify the weight precision using -Dquant=<precision>.\n"
+        "Available options: fp16, int8, int4\n"
+        "This must match the --quantization used by export_weights.py.\n"
+        "Example:\n"
+        "  cmake -Dmodel=0.5b -Dquant=fp16 -Dgpu_arch=75 ..\n"
+    )
+endif()
+
+string(TOLOWER "${quant}" QUANT_MODE)
+
+if(QUANT_MODE STREQUAL "int8")
+    add_compile_definitions(QUANT_INT8)
+    set(QUANT_NAME_STR "INT8 (weights-only, W8A16)")
+elseif(QUANT_MODE STREQUAL "int4")
+    add_compile_definitions(QUANT_INT4)
+    set(QUANT_NAME_STR "INT4 (weights-only, W4A16)")
+elseif(QUANT_MODE STREQUAL "fp16")
+    set(QUANT_NAME_STR "FP16")
+else()
+    message(FATAL_ERROR "Invalid quant option '${quant}'. Options are: fp16, int8, int4")
+endif()
+
 # 2. Compulsory Input: -Dgpu_arch=<architecture> (e.g. 75, 80, 86, 89)
 if(NOT DEFINED gpu_arch)
     message(FATAL_ERROR 
         "\n[!] Error: 'gpu_arch' variable is compulsory.\n"
         "Please specify your target CUDA architecture using -Dgpu_arch=<arch>.\n"
         "Examples:\n"
-        "  Turing (RTX 20xx / GTX 16xx / GTX 1650 Ti / T4):  cmake -Dmodel=0.5b -Dgpu_arch=75 ..\n"
-        "  Ampere (RTX 30xx / A100):                          cmake -Dmodel=0.5b -Dgpu_arch=86 ..\n"
-        "  Ada Lovelace (RTX 40xx / L4):                       cmake -Dmodel=0.5b -Dgpu_arch=89 ..\n"
+        "  Turing (RTX 20xx / GTX 16xx / GTX 1650 Ti / T4):  cmake -Dmodel=0.5b -Dquant=fp16 -Dgpu_arch=75 ..\n"
+        "  Ampere (RTX 30xx / A100):                          cmake -Dmodel=0.5b -Dquant=fp16 -Dgpu_arch=86 ..\n"
+        "  Ada Lovelace (RTX 40xx / L4):                       cmake -Dmodel=0.5b -Dquant=fp16 -Dgpu_arch=89 ..\n"
     )
 endif()
 
@@ -49,6 +79,7 @@ endif()
 set(CMAKE_CUDA_ARCHITECTURES ${gpu_arch})
 
 message(STATUS "Configuring CUQWEN build for model size: Qwen2.5-${MODEL_NAME_STR}")
+message(STATUS "Weight precision: ${QUANT_NAME_STR}")
 message(STATUS "Targeting CUDA Compute Capability: sm_${gpu_arch}")
 
 # 3. Find External Packages (CUDA & PCRE2)

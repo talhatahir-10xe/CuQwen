@@ -8,6 +8,54 @@ union Vector128 {
     half2 h2[4];
 };
 
+#if defined(QUANT_INT8)
+__device__ __forceinline__ float dot8(
+    const int8_t* __restrict__ w_row, const half* __restrict__ srow, int c, const half2* xh
+) {
+    int2 raw = __ldg(reinterpret_cast<const int2*>(w_row) + c);   // 8 x int8 = 8 bytes
+    const int8_t* b = reinterpret_cast<const int8_t*>(&raw);
+    float s = __half2float(__ldg(srow + (c >> 4)));
+    float p = 0.0f;
+    #pragma unroll
+    for (int k = 0; k < 4; ++k) {
+        p = __fmaf_rn((float)b[2 * k],     __half2float(xh[k].x),
+            __fmaf_rn((float)b[2 * k + 1], __half2float(xh[k].y), p));
+    }
+    return p * s;
+}
+#elif defined(QUANT_INT4)
+__device__ __forceinline__ float dot8(
+    const int8_t* __restrict__ w_row, const half* __restrict__ srow, int c, const half2* xh
+) {
+    int raw = __ldg(reinterpret_cast<const int*>(w_row) + c);
+    float s = __half2float(__ldg(srow + (c >> 4)));
+    float p = 0.0f;
+    #pragma unroll
+    for (int k = 0; k < 4; ++k) {
+        int byte = (raw >> (8 * k)) & 0xFF;
+        int lo = ((byte & 0xF) ^ 0x8) - 0x8;
+        int hi = (((byte >> 4) & 0xF) ^ 0x8) - 0x8;
+        p = __fmaf_rn((float)lo, __half2float(xh[k].x),
+            __fmaf_rn((float)hi, __half2float(xh[k].y), p));
+    }
+    return p * s;
+}
+#else
+__device__ __forceinline__ float dot8(
+    const half* __restrict__ w_row, const half* /*srow*/, int c, const half2* xh
+) {
+    float4 wf = __ldg(reinterpret_cast<const float4*>(w_row) + c);
+    const half2* wh = reinterpret_cast<const half2*>(&wf);
+    float p = 0.0f;
+    #pragma unroll
+    for (int k = 0; k < 4; ++k) {
+        p = __fmaf_rn(__half2float(wh[k].x), __half2float(xh[k].x),
+            __fmaf_rn(__half2float(wh[k].y), __half2float(xh[k].y), p));
+    }
+    return p;
+}
+#endif
+
 __device__ __forceinline__ float warp_reduce_sum(float val) {
     #pragma unroll
     for (int offset = 16; offset > 0; offset /= 2) {
@@ -27,7 +75,6 @@ __device__ __forceinline__ float block_reduce_sum(float val, float* s_mem) {
     }
     __syncthreads();
 
-    // Reduce warp sums using the first warp
     val = (threadIdx.x < blockDim.x / 32) ? s_mem[lane] : 0.0f;
     if (warp_id == 0) {
         val = warp_reduce_sum(val);
@@ -348,9 +395,12 @@ constexpr int QKV_WARPS_PER_BLOCK = GEMV_WARPS_PER_BLOCK;
 
 __global__ void fused_attn_block_kernel(
     const half* __restrict__ xn,
-    const half* __restrict__ W_q,
-    const half* __restrict__ W_k,
-    const half* __restrict__ W_v,
+    const qweight_t* __restrict__ W_q,
+    const qweight_t* __restrict__ W_k,
+    const qweight_t* __restrict__ W_v,
+    const half* __restrict__ W_q_scale,
+    const half* __restrict__ W_k_scale,
+    const half* __restrict__ W_v_scale,
     const half* __restrict__ b_q,
     const half* __restrict__ b_k,
     const half* __restrict__ b_v,
@@ -367,36 +417,42 @@ __global__ void fused_attn_block_kernel(
     if (out_idx >= total) return;
 
     const int vec_dim = dim / 8;
+#ifdef QUANT_ENABLED
+    const int grp_dim = dim / QUANT_GROUP_SIZE;   // scales per weight row
+#endif
     const float4* x_g = reinterpret_cast<const float4*>(xn);
 
-    const float4* W_row;
+    const qweight_t* W_row;
+    const half* W_srow = nullptr;
     float bias_val;
     const bool is_q = (out_idx < q_dim);
     const bool is_k = (out_idx >= q_dim && out_idx < q_dim + kv_dim);
     if (is_q) {
-        W_row = reinterpret_cast<const float4*>(W_q + (size_t)out_idx * dim);
+        W_row = W_q + (size_t)out_idx * WEIGHT_ROW_STRIDE(dim);
         bias_val = __half2float(b_q[out_idx]);
+#ifdef QUANT_ENABLED
+        W_srow = W_q_scale + (size_t)out_idx * grp_dim;
+#endif
     } else if (is_k) {
         int ki = out_idx - q_dim;
-        W_row = reinterpret_cast<const float4*>(W_k + (size_t)ki * dim);
+        W_row = W_k + (size_t)ki * WEIGHT_ROW_STRIDE(dim);
         bias_val = __half2float(b_k[ki]);
+#ifdef QUANT_ENABLED
+        W_srow = W_k_scale + (size_t)ki * grp_dim;
+#endif
     } else {
         int vi = out_idx - q_dim - kv_dim;
-        W_row = reinterpret_cast<const float4*>(W_v + (size_t)vi * dim);
+        W_row = W_v + (size_t)vi * WEIGHT_ROW_STRIDE(dim);
         bias_val = __half2float(b_v[vi]);
+#ifdef QUANT_ENABLED
+        W_srow = W_v_scale + (size_t)vi * grp_dim;
+#endif
     }
 
     float acc = 0.0f;
     for (int c = lane; c < vec_dim; c += 32) {
         float4 xf = x_g[c];               // shared across warps -> L2 resident
-        float4 wf = __ldg(W_row + c);
-        const half2* xh = reinterpret_cast<const half2*>(&xf);
-        const half2* wh = reinterpret_cast<const half2*>(&wf);
-        #pragma unroll
-        for (int k = 0; k < 4; ++k) {
-            acc = __fmaf_rn(__half2float(wh[k].x), __half2float(xh[k].x),
-                  __fmaf_rn(__half2float(wh[k].y), __half2float(xh[k].y), acc));
-        }
+        acc += dot8(W_row, W_srow, c, reinterpret_cast<const half2*>(&xf));
     }
 
     #pragma unroll
@@ -414,9 +470,12 @@ __global__ void fused_attn_block_kernel(
 void launch_fused_attn_block(
     const half* x,
     const half* norm_weight,
-    const half* W_q,
-    const half* W_k,
-    const half* W_v,
+    const qweight_t* W_q,
+    const qweight_t* W_k,
+    const qweight_t* W_v,
+    const half* W_q_scale,
+    const half* W_k_scale,
+    const half* W_v_scale,
     const half* b_q,
     const half* b_k,
     const half* b_v,
@@ -440,7 +499,7 @@ void launch_fused_attn_block(
     int blocks = (total + QKV_WARPS_PER_BLOCK - 1) / QKV_WARPS_PER_BLOCK;
 
     fused_attn_block_kernel<<<blocks, threads, 0, stream>>>(
-        x, W_q, W_k, W_v, b_q, b_k, b_v,
+        x, W_q, W_k, W_v, W_q_scale, W_k_scale, W_v_scale, b_q, b_k, b_v,
         q_out, k_out, v_out, dim, q_dim, kv_dim
     );
     CUDA_CHECK(cudaGetLastError());
@@ -457,8 +516,10 @@ constexpr int MLP1_WARPS_PER_BLOCK = GEMV_WARPS_PER_BLOCK;
 
 __global__ void fused_mlp_stage1_kernel(
     const half* __restrict__ xn,
-    const half* __restrict__ gate_weight,
-    const half* __restrict__ up_weight,
+    const qweight_t* __restrict__ gate_weight,
+    const qweight_t* __restrict__ up_weight,
+    const half* __restrict__ gate_scale,
+    const half* __restrict__ up_scale,
     half* __restrict__ intermediate_out,
     int dim,
     int inter_dim
@@ -469,28 +530,24 @@ __global__ void fused_mlp_stage1_kernel(
 
     const int vec_dim = dim / 8;
     const float4* x_g    = reinterpret_cast<const float4*>(xn);
-    const float4* gate_g = reinterpret_cast<const float4*>(gate_weight + (size_t)row * dim);
-    const float4* up_g   = reinterpret_cast<const float4*>(up_weight   + (size_t)row * dim);
+    const qweight_t* gate_row = gate_weight + (size_t)row * WEIGHT_ROW_STRIDE(dim);
+    const qweight_t* up_row   = up_weight   + (size_t)row * WEIGHT_ROW_STRIDE(dim);
+    const half* gate_srow = nullptr;
+    const half* up_srow   = nullptr;
+#ifdef QUANT_ENABLED
+    const int grp_dim = dim / QUANT_GROUP_SIZE;
+    gate_srow = gate_scale + (size_t)row * grp_dim;
+    up_srow   = up_scale   + (size_t)row * grp_dim;
+#endif
 
     float gate_acc = 0.0f;
     float up_acc   = 0.0f;
 
     for (int c = lane; c < vec_dim; c += 32) {
         float4 xf = x_g[c];               // shared across warps -> L2 resident
-        float4 gf = __ldg(gate_g + c);
-        float4 uf = __ldg(up_g   + c);
         const half2* xh = reinterpret_cast<const half2*>(&xf);
-        const half2* gh = reinterpret_cast<const half2*>(&gf);
-        const half2* uh = reinterpret_cast<const half2*>(&uf);
-        #pragma unroll
-        for (int k = 0; k < 4; ++k) {
-            float x0 = __half2float(xh[k].x);
-            float x1 = __half2float(xh[k].y);
-            gate_acc = __fmaf_rn(__half2float(gh[k].x), x0,
-                       __fmaf_rn(__half2float(gh[k].y), x1, gate_acc));
-            up_acc   = __fmaf_rn(__half2float(uh[k].x), x0,
-                       __fmaf_rn(__half2float(uh[k].y), x1, up_acc));
-        }
+        gate_acc += dot8(gate_row, gate_srow, c, xh);
+        up_acc   += dot8(up_row,   up_srow,   c, xh);
     }
 
     #pragma unroll
@@ -507,7 +564,8 @@ __global__ void fused_mlp_stage1_kernel(
 
 void launch_fused_mlp_stage1(
     const half* x, const half* norm_weight,
-    const half* gate_weight, const half* up_weight,
+    const qweight_t* gate_weight, const qweight_t* up_weight,
+    const half* gate_scale, const half* up_scale,
     half* intermediate_out, int dim, int inter_dim, half eps,
     cudaStream_t stream
 ) {
@@ -515,17 +573,18 @@ void launch_fused_mlp_stage1(
     int threads = MLP1_WARPS_PER_BLOCK * 32;
     int blocks  = (inter_dim + MLP1_WARPS_PER_BLOCK - 1) / MLP1_WARPS_PER_BLOCK;
     fused_mlp_stage1_kernel<<<blocks, threads, 0, stream>>>(
-        x, gate_weight, up_weight, intermediate_out, dim, inter_dim
+        x, gate_weight, up_weight, gate_scale, up_scale, intermediate_out, dim, inter_dim
     );
     CUDA_CHECK(cudaGetLastError());
 }
 
 
-constexpr int MLP2_WARPS_PER_BLOCK = GEMV_WARPS_PER_BLOCK;
+constexpr int MLP2_WARPS_PER_BLOCK = GEMV_WIDE_WARPS_PER_BLOCK;
 
 __global__ void fused_mlp_stage2_kernel(
     half* __restrict__ x,
-    const half* __restrict__ down_weight,
+    const qweight_t* __restrict__ down_weight,
+    const half* __restrict__ down_scale,
     const half* __restrict__ intermediate_in,
     int dim,
     int inter_dim
@@ -535,20 +594,17 @@ __global__ void fused_mlp_stage2_kernel(
     if (row >= dim) return;
 
     const int vec_inter = inter_dim / 8;
-    const float4* down_g = reinterpret_cast<const float4*>(down_weight + (size_t)row * inter_dim);
+    const qweight_t* down_row = down_weight + (size_t)row * WEIGHT_ROW_STRIDE(inter_dim);
+    const half* down_srow = nullptr;
+#ifdef QUANT_ENABLED
+    down_srow = down_scale + (size_t)row * (inter_dim / QUANT_GROUP_SIZE);
+#endif
     const float4* inter_g = reinterpret_cast<const float4*>(intermediate_in);
 
     float acc = 0.0f;
     for (int c = lane; c < vec_inter; c += 32) {
-        float4 dw = __ldg(down_g + c);
         float4 iv = inter_g[c];           // shared across warps -> L2 resident
-        const half2* dh = reinterpret_cast<const half2*>(&dw);
-        const half2* ih = reinterpret_cast<const half2*>(&iv);
-        #pragma unroll
-        for (int k = 0; k < 4; ++k) {
-            acc = __fmaf_rn(__half2float(dh[k].x), __half2float(ih[k].x),
-                  __fmaf_rn(__half2float(dh[k].y), __half2float(ih[k].y), acc));
-        }
+        acc += dot8(down_row, down_srow, c, reinterpret_cast<const half2*>(&iv));
     }
 
     #pragma unroll
@@ -560,22 +616,24 @@ __global__ void fused_mlp_stage2_kernel(
 }
 
 void launch_fused_mlp_stage2(
-    half* x, const half* down_weight, const half* intermediate_in,
+    half* x, const qweight_t* down_weight, const half* down_scale,
+    const half* intermediate_in,
     int dim, int inter_dim, cudaStream_t stream
 ) {
     int threads = MLP2_WARPS_PER_BLOCK * 32;
     int blocks  = (dim + MLP2_WARPS_PER_BLOCK - 1) / MLP2_WARPS_PER_BLOCK;
     fused_mlp_stage2_kernel<<<blocks, threads, 0, stream>>>(
-        x, down_weight, intermediate_in, dim, inter_dim
+        x, down_weight, down_scale, intermediate_in, dim, inter_dim
     );
     CUDA_CHECK(cudaGetLastError());
 }
 
 
-constexpr int GEMV_ADD_WARPS_PER_BLOCK = GEMV_WARPS_PER_BLOCK;
+constexpr int GEMV_ADD_WARPS_PER_BLOCK = GEMV_WIDE_WARPS_PER_BLOCK;
 
 __global__ void gemv_add_fp16_kernel(
-    const half* __restrict__ W,
+    const qweight_t* __restrict__ W,
+    const half* __restrict__ W_scale,
     const half* __restrict__ input,
     half* __restrict__ x_inout,
     int rows,
@@ -586,20 +644,17 @@ __global__ void gemv_add_fp16_kernel(
     if (row >= rows) return;
 
     const int vec_cols = cols / 8;
-    const float4* W_row_vec = reinterpret_cast<const float4*>(W + (size_t)row * cols);
-    const float4* in_vec    = reinterpret_cast<const float4*>(input);
+    const qweight_t* W_row = W + (size_t)row * WEIGHT_ROW_STRIDE(cols);
+    const half* W_srow = nullptr;
+#ifdef QUANT_ENABLED
+    W_srow = W_scale + (size_t)row * (cols / QUANT_GROUP_SIZE);
+#endif
+    const float4* in_vec = reinterpret_cast<const float4*>(input);
 
     float acc = 0.0f;
     for (int c = lane; c < vec_cols; c += 32) {
-        float4 wf = __ldg(W_row_vec + c);
         float4 inf = in_vec[c];           // shared across warps -> L2 resident
-        const half2* wh = reinterpret_cast<const half2*>(&wf);
-        const half2* ih = reinterpret_cast<const half2*>(&inf);
-        #pragma unroll
-        for (int k = 0; k < 4; ++k) {
-            acc = __fmaf_rn(__half2float(wh[k].x), __half2float(ih[k].x),
-                  __fmaf_rn(__half2float(wh[k].y), __half2float(ih[k].y), acc));
-        }
+        acc += dot8(W_row, W_srow, c, reinterpret_cast<const half2*>(&inf));
     }
 
     #pragma unroll
@@ -611,7 +666,8 @@ __global__ void gemv_add_fp16_kernel(
 }
 
 void launch_gemv_add_fp16(
-    const half* W,
+    const qweight_t* W,
+    const half* W_scale,
     const half* input,
     half* x_inout,
     int rows,
@@ -620,7 +676,7 @@ void launch_gemv_add_fp16(
 ) {
     int threads = GEMV_ADD_WARPS_PER_BLOCK * 32;
     int blocks  = (rows + GEMV_ADD_WARPS_PER_BLOCK - 1) / GEMV_ADD_WARPS_PER_BLOCK;
-    gemv_add_fp16_kernel<<<blocks, threads, 0, stream>>>(W, input, x_inout, rows, cols);
+    gemv_add_fp16_kernel<<<blocks, threads, 0, stream>>>(W, W_scale, input, x_inout, rows, cols);
     CUDA_CHECK(cudaGetLastError());
 }
 
@@ -682,7 +738,6 @@ __global__ void rmsnorm_kernel(
         out_vec[i] = out_v.f4;
     }
 
-    // Scalar tail write
     for (int i = vec_dim * 8 + tid; i < dim; i += blockDim.x) {
         float val = __half2float(x[i]) * inv_rms_f32 * __half2float(norm_weight[i]);
         out[i] = __float2half(val);
@@ -756,6 +811,59 @@ void launch_compute_logits(
     CUDA_CHECK(cudaGetLastError());
 }
 
+__global__ void compute_logits_int8_kernel(
+    const half* __restrict__ x_normed,
+    const int8_t* __restrict__ lm_head_w,
+    const half* __restrict__ lm_head_scale,
+    half* __restrict__ logits,
+    int vocab_size,
+    int dim
+) {
+    const int lane = threadIdx.x & 31;
+    const int v    = blockIdx.x * LOGITS_WARPS_PER_BLOCK + (threadIdx.x >> 5);
+    if (v >= vocab_size) return;
+
+    const int vec_dim = dim / 8;
+    const int grp_dim = dim / QUANT_GROUP_SIZE;
+    const float4* x_g   = reinterpret_cast<const float4*>(x_normed);
+    const int8_t* w_row = lm_head_w + (size_t)v * dim;
+    const half*   s_row = lm_head_scale + (size_t)v * grp_dim;
+
+    float acc = 0.0f;
+    for (int c = lane; c < vec_dim; c += 32) {
+        float4 xf = x_g[c];
+        const half2* xh = reinterpret_cast<const half2*>(&xf);
+        int2 raw = __ldg(reinterpret_cast<const int2*>(w_row) + c);   // 8 x int8
+        const int8_t* b = reinterpret_cast<const int8_t*>(&raw);
+        float s = __half2float(__ldg(s_row + (c >> 4)));
+        float p = 0.0f;
+        #pragma unroll
+        for (int k = 0; k < 4; ++k)
+            p = __fmaf_rn((float)b[2 * k],     __half2float(xh[k].x),
+                __fmaf_rn((float)b[2 * k + 1], __half2float(xh[k].y), p));
+        acc += p * s;
+    }
+
+    #pragma unroll
+    for (int off = 16; off > 0; off >>= 1)
+        acc += __shfl_down_sync(0xffffffff, acc, off);
+
+    if (lane == 0)
+        logits[v] = __float2half(acc);
+}
+
+void launch_compute_logits_int8(
+    const half* x_normed, const int8_t* lm_head_w, const half* lm_head_scale,
+    half* logits, int vocab_size, int dim, cudaStream_t stream
+) {
+    int threads = LOGITS_WARPS_PER_BLOCK * 32;
+    int blocks  = (vocab_size + LOGITS_WARPS_PER_BLOCK - 1) / LOGITS_WARPS_PER_BLOCK;
+    compute_logits_int8_kernel<<<blocks, threads, 0, stream>>>(
+        x_normed, lm_head_w, lm_head_scale, logits, vocab_size, dim
+    );
+    CUDA_CHECK(cudaGetLastError());
+}
+
 __global__ void repetition_penalty_kernel(
     half* logits,
     const int* d_history,
@@ -790,64 +898,58 @@ void launch_apply_repetition_penalty(
     CUDA_CHECK(cudaGetLastError());
 }
 
-__global__ void argmax_kernel(const half* logits, int* out_token, int vocab_size) {
-    int tid = threadIdx.x;
-    float thread_max_val = -1e9f;
-    int thread_max_idx = 0;
+__device__ __forceinline__ unsigned long long argmax_pack(float v, int idx) {
+    unsigned int fu  = __float_as_uint(v);
+    unsigned int key = (fu & 0x80000000u) ? ~fu : (fu | 0x80000000u);
+    return ((unsigned long long)key << 32) | (unsigned int)(~idx);
+}
 
-    #pragma unroll 4
-    for (int i = tid; i < vocab_size; i += blockDim.x) {
-        float val = __half2float(logits[i]);
-        if (val > thread_max_val) {
-            thread_max_val = val;
-            thread_max_idx = i;
-        }
+// ARGMAX_BLOCKS / ARGMAX_THREADS are defined in config.h (tunable per GPU).
+
+__global__ void argmax_stage1_kernel(const half* __restrict__ logits,
+                                     unsigned long long* __restrict__ block_best,
+                                     int vocab_size) {
+    unsigned long long best = 0ULL;
+    for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < vocab_size;
+         i += gridDim.x * blockDim.x) {
+        unsigned long long p = argmax_pack(__half2float(logits[i]), i);
+        if (p > best) best = p;
     }
-
-    #pragma unroll
-    for (int offset = 16; offset > 0; offset /= 2) {
-        float other_val = __shfl_down_sync(0xffffffff, thread_max_val, offset);
-        int other_idx   = __shfl_down_sync(0xffffffff, thread_max_idx, offset);
-        if (other_val > thread_max_val) {
-            thread_max_val = other_val;
-            thread_max_idx = other_idx;
-        }
-    }
-
-    __shared__ float s_max_vals[32];
-    __shared__ int   s_max_indices[32];
-
-    int lane = tid % 32;
-    int warp_id = tid / 32;
-
-    if (lane == 0) {
-        s_max_vals[warp_id]    = thread_max_val;
-        s_max_indices[warp_id] = thread_max_idx;
-    }
+    __shared__ unsigned long long s[ARGMAX_THREADS];
+    s[threadIdx.x] = best;
     __syncthreads();
-
-    if (warp_id == 0) {
-        float val = (tid < blockDim.x / 32) ? s_max_vals[lane] : -1e9f;
-        int idx   = (tid < blockDim.x / 32) ? s_max_indices[lane] : 0;
-
-        #pragma unroll
-        for (int offset = 16; offset > 0; offset /= 2) {
-            float other_val = __shfl_down_sync(0xffffffff, val, offset);
-            int other_idx   = __shfl_down_sync(0xffffffff, idx, offset);
-            if (other_val > val) {
-                val = other_val;
-                idx = other_idx;
-            }
-        }
-
-        if (tid == 0) {
-            *out_token = idx;
-        }
+    for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
+        if (threadIdx.x < stride && s[threadIdx.x + stride] > s[threadIdx.x])
+            s[threadIdx.x] = s[threadIdx.x + stride];
+        __syncthreads();
     }
+    if (threadIdx.x == 0) block_best[blockIdx.x] = s[0];
+}
+
+__global__ void argmax_stage2_kernel(const unsigned long long* __restrict__ block_best,
+                                     int* __restrict__ out_token, int n) {
+    unsigned long long best = 0ULL;
+    for (int i = threadIdx.x; i < n; i += blockDim.x)
+        if (block_best[i] > best) best = block_best[i];
+    __shared__ unsigned long long s[ARGMAX_BLOCKS];
+    s[threadIdx.x] = best;
+    __syncthreads();
+    for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
+        if (threadIdx.x < stride && s[threadIdx.x + stride] > s[threadIdx.x])
+            s[threadIdx.x] = s[threadIdx.x + stride];
+        __syncthreads();
+    }
+    if (threadIdx.x == 0)
+        *out_token = (int)(~((unsigned int)(s[0] & 0xffffffffu)));
 }
 
 void launch_argmax(const half* logits, int* d_sampled_token, int vocab_size, cudaStream_t stream) {
-    int threads = 256;
-    argmax_kernel<<<1, threads, 0, stream>>>(logits, d_sampled_token, vocab_size);
+    static unsigned long long* g_block_best = nullptr;
+    if (!g_block_best)
+        CUDA_CHECK(cudaMalloc(&g_block_best, ARGMAX_BLOCKS * sizeof(unsigned long long)));
+    argmax_stage1_kernel<<<ARGMAX_BLOCKS, ARGMAX_THREADS, 0, stream>>>(
+        logits, g_block_best, vocab_size);
+    argmax_stage2_kernel<<<1, ARGMAX_BLOCKS, 0, stream>>>(
+        g_block_best, d_sampled_token, ARGMAX_BLOCKS);
     CUDA_CHECK(cudaGetLastError());
 }
