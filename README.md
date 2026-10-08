@@ -7,14 +7,14 @@ CuQwen is a C++/CUDA inference engine written purely from scratch to explore the
 ## Performance
 Average inference speed (tokens/second) for **Qwen2.5 Instruct model** across 8K context window on RTX 3090 
 
-| Model Size | CuQwen | vLLM | Ollama |
-| ---------- | ------ | ---- | ------ |
-| 0.5b       |   490  | 471  | 371    |
-| 1.5b       |   212  | 191  | 160    |
-| 3b         |   114  | 109  | 112    |
-| 7b         |   57   | 50   | 55     |
+| Model Size | CuQwen | vLLM |
+| ---------- | ------ | ---- |
+| 0.5b       |   490  | 447  |
+| 1.5b       |   212  | 190  |
+| 3b         |   114  | 107  |
+| 7b         |   57   | 51   |
 
-Complete benchmarking results and details can be found [here](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/BENCHMARK.md).
+Complete benchmarking results and details can be found [here](https://github.com/talhatahir-10xe/CuQwen/blob/release1.0/docs/BENCHMARK.md).
 
 ## Supported Models
 
@@ -32,7 +32,7 @@ Quantizied models and latest Qwen model series (`Qwen 3.0`, `3.5`, `3.6`, `3.7` 
 ```text
 CuQwen/
 ├── assets/
-├── benchmark/            # Head-to-head benchmarking vs. production engines (ollama and vllm)
+├── benchmark/            # Head-to-head benchmarking vs. the vLLM production engine
 ├── CMakeLists.txt        # Top-level C++ build configuration
 ├── cuda_optimizations/   # Incremental CuQwen optimization journey
 ├── Dockerfile            # Container definition for reproducible environments
@@ -113,7 +113,7 @@ make -j$(nproc)
 cd ..
 ./build/cuqwen_benchmark
 ```
-The `benchmark/` directory also has the scripts for `vLLM` and `Ollama` which were used to benchmark those inference engines. To run these benchmarking scripts please reffer [here](https://github.com/talhatahir-10xe/CuQwen/blob/main/benchmark/README.md) 
+The `benchmark/` directory also has the script for `vLLM` which was used to benchmark that inference engine. To run this benchmarking script please refer [here](https://github.com/talhatahir-10xe/CuQwen/blob/release1.0/benchmark/README.md) 
 
 ## Roadmap & Future Work
 The following enhancements are planned for future development cycles:
@@ -127,5 +127,5 @@ The following enhancements are planned for future development cycles:
 
 ## Documentation
 
-* [**Benchmarking CuQwen**](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/BENCHMARK.md): Contains the benchmarking details and results of CuQwen vs vLLM and Ollama
-* [**Optimization journey**](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/OPTIMIZATION_JOURNEY.md): Contains the complete journey of different optimizations that were used in the process of implementing CuQwen
+* [**Benchmarking CuQwen**](https://github.com/talhatahir-10xe/CuQwen/blob/release1.0/docs/BENCHMARK.md): Contains the benchmarking details and results of CuQwen vs vLLM
+* [**Optimization journey**](https://github.com/talhatahir-10xe/CuQwen/blob/release1.0/docs/OPTIMIZATION_JOURNEY.md): Contains the complete journey of different optimizations that were used in the process of implementing CuQwen

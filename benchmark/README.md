@@ -1,6 +1,6 @@
 # CuQwen Benchmarking Suite
 
-This directory contains the benchmarker applications and evaluation scripts used to compare **CuQwen** against production LLM inference frameworks (**vLLM** and **Ollama**).
+This directory contains the benchmarker applications and evaluation scripts used to compare **CuQwen** against the **vLLM** production inference framework.
 
 The benchmark measures bare-metal, single-user (`Batch Size 1`) autoregressive decode speed across an **8k context window** sampled in **1k slice increments**.
 
@@ -11,7 +11,6 @@ CuQwen/benchmark/
 ├── CMakeLists.txt         # Build configuration for C++/CUDA benchmarks
 ├── cuqwen_benchmark.cu    # Native CUDA benchmark binary source
 ├── hf_benchmark.py        # Baseline Hugging Face Transformers benchmark script
-├── ollama_benchmark.py    # Async streaming benchmark script for Ollama (FP16)
 └── vllm_benchmark.py      # AsyncLLMEngine benchmark script for vLLM (FP16)
 ```
 
@@ -59,44 +58,9 @@ pip3 install --no-cache-dir --break-system-packages vllm==0.26.0
 python3 vllm_benchmark.py --model=<model_size>
 ```
 
-### 3. Ollama Benchmark Setup
-
-Install Ollama, launch the background daemon, prepare FP16 GGUF model files, and run the benchmark script:
-
-#### Install and Start Ollama Engine
-
-```bash
-apt-get update && apt-get install -y curl zstd
-curl -fsSL https://ollama.com/install.sh | sh
-
-# Configure environment for pure single-sequence testing
-export OLLAMA_KEEP_ALIVE=-1
-export OLLAMA_NUM_PARALLEL=1
-
-# Launch server in background
-ollama serve > /dev/null 2>&1 &
-
-# Install Python dependencies
-pip3 install ollama numpy huggingface_hub --break-system-packages
-```
-
-#### Prepare Model & Run Benchmark (Example for 1.5B)
-
-```bash
-# Download target FP16 GGUF model
-hf download Qwen/Qwen2.5-1.5B-Instruct-GGUF qwen2.5-1.5b-instruct-fp16.gguf --local-dir .
-
-# Create local Ollama model manifest
-echo "FROM ./qwen2.5-1.5b-instruct-fp16.gguf" > Modelfile
-ollama create qwen2.5:1.5b-fp16 -f Modelfile
-
-# Run Ollama benchmark
-python3 ollama_benchmark.py --model=1.5b
-```
-
 ## Benchmark Output Metrics
 
-All three framework runners record and report identical metric parameters to allow direct head-to-head comparisons:
+Both framework runners record and report identical metric parameters to allow direct head-to-head comparisons:
 
 * **Token Slice Throughput (tok/s):** Measured speed across each 1,000-token context chunk ($0\rightarrow1\text{k}, 1\text{k}\rightarrow2\text{k}, \dots, 7\text{k}\rightarrow8\text{k}$).
 * **Average Speed (tok/s):** Mean generation speed across the entire 8k context window.
