@@ -2,14 +2,12 @@
 
 ![CuQwen](/assets/CuQwen.jpeg)
 
-***Note: Release 1.2 adds weights-only `int8` (W8A16) and `int4` (W4A16) quantization for all supported Qwen2.5 models, on top of the long-context decode path from release 1.1.***
-
 CuQwen is a C++/CUDA inference engine written purely from scratch to explore the theoretical performance limits of single-user (```Batch Size 1```) autoregressive token generation using optimized custom CUDA kernels for open source Qwen models that can run on local edge devices for Nvidia GPUs.
 
 ## Performance
 Average decode speed (tokens/second) for the **Qwen2.5 Instruct** models across the 32K context window on an RTX 3090, in each supported weights-only precision. CuQwen posts the highest average throughput in every configuration.
 
-Each engine column is split into the three weights-only precisions (**FP16** W16A16, **INT8** W8A16, **INT4** W4A16). CuQwen values are **bold**.
+Each engine column is split into the three weights-only precisions (**FP16** W16A16, **INT8** W8A16, **INT4** W4A16).
 
 <table>
   <thead>
@@ -44,7 +42,7 @@ CuQwen natively supports the **Qwen2.5** model family across multiple parameter 
 * **Qwen2.5-3B** (`3b`)
 * **Qwen2.5-7B** (`7b`)
 
-Quantizied models and latest Qwen model series (`Qwen 3.0`, `3.5`, `3.6`, `3.7` and `3.8`) will also be supported in next releases 
+Latest Qwen model series (`Qwen 3.0`, `3.5`, `3.6`, `3.7` and `3.8`) will also be supported in next releases 
 
 ## Project Structure
 
