@@ -42,7 +42,7 @@ CuQwen natively supports the **Qwen2.5** model family across multiple parameter 
 * **Qwen2.5-3B** (`3b`)
 * **Qwen2.5-7B** (`7b`)
 
-Latest Qwen model series (`Qwen 3.0`, `3.5`, `3.6`, `3.7` and `3.8`) will also be supported in next releases 
+Latest Qwen model series (`Qwen 3.0`, `3.5` and `3.8`) will also be supported in next releases 
 
 ## Project Structure
 
