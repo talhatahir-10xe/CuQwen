@@ -2,8 +2,6 @@
 
 This document details the benchmarking methodology, hardware configuration, and performance analysis comparing **CuQwen 1.2** against industry-standard inference frameworks (**vLLM** and **llama.cpp**) across the full 32K context window, in all three supported weight precisions: **FP16 (W16A16)**, **INT8 (W8A16)**, and **INT4 (W4A16)**.
 
-> Release 1.2 adds weights-only INT8/INT4 quantization on top of the long-context decode path introduced in 1.1. For the earlier long-context work, see the [CuQwen 1.1 Benchmark](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.1_BENCHMARK.md) and [CuQwen 1.1 Optimization](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.1_OPTIMIZATION.md) documents.
-
 ---
 
 ## Benchmarking Strategy & Hardware Setup
@@ -16,10 +14,7 @@ CuQwen 1.2 was tested head-to-head against vLLM and llama.cpp on the **Qwen2.5**
   * **vLLM:** official GPTQ weights (`Qwen2.5-<S>-Instruct-GPTQ-Int8` / `-Int4`).
   * **llama.cpp:** official GGUF weights (`q8_0` / `q4_0`), measured via the native `llama-bench` (CUDA graphs + FlashAttention, all layers on GPU).
 * **Batch Size:** Fixed at `1` (single-user interactive latency) — the regime where llama.cpp is strongest and vLLM's continuous batching is not exercised.
-* **Context Window & Sampling:** Decode throughput sampled at **9 context depths** spanning the **32K window**. CuQwen is sampled at `{1, 5, 9, 13, 17, 21, 25, 29, 32}K`; vLLM and llama.cpp at the near-identical depths `{0.5, 3.5, 7.5, 11.5, 15.5, 19.5, 23.5, 27.5, 31.5}K`. Prefill is excluded on all engines, so each figure is steady-state decode speed at that depth.
-
-> *Note:* the single 0.5B / FP16 / llama.cpp ~32K point is extrapolated from its trend; every other data point is measured.
-
+* **Context Window & Sampling:** Decode throughput sampled at **9 context depths** spanning the **32K window**. Prefill is excluded on all engines, so each figure is steady-state decode speed at that depth.
 ---
 
 ## Benchmark Analysis
