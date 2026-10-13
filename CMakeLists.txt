@@ -29,8 +29,11 @@ elseif(MODEL_SIZE STREQUAL "3b")
 elseif(MODEL_SIZE STREQUAL "7b")
     add_compile_definitions(QWEN_MODEL_7B)
     set(MODEL_NAME_STR "7B")
+elseif(MODEL_SIZE STREQUAL "14b")
+    add_compile_definitions(QWEN_MODEL_14B)
+    set(MODEL_NAME_STR "14B")
 else()
-    message(FATAL_ERROR "Invalid model option '${model}'. Options are: 0.5b, 1.5b, 3b, 7b")
+    message(FATAL_ERROR "Invalid model option '${model}'. Options are: 0.5b, 1.5b, 3b, 7b, 14b")
 endif()
 
 # 1b. Compulsory Input: -Dquant=<fp16|int8|int4>

@@ -100,8 +100,20 @@ struct QwenConfig {
     static constexpr int32_t head_dim          = 128;
     static constexpr int32_t max_seq_len       = 32768;
 
+#elif defined(QWEN_MODEL_14B)
+    static constexpr const char* model_name = "14B";
+    #define MODEL_TAG "14b"
+    static constexpr int32_t vocab_size        = 152064;
+    static constexpr int32_t dim               = 5120;
+    static constexpr int32_t intermediate_size = 13824;
+    static constexpr int32_t n_layers          = 48;
+    static constexpr int32_t n_heads           = 40;
+    static constexpr int32_t n_kv_heads        = 8;
+    static constexpr int32_t head_dim          = 128;
+    static constexpr int32_t max_seq_len       = 32768;
+
 #else
-    #error "Model size preprocessor directive not set! Define QWEN_MODEL_0_5B, QWEN_MODEL_1_5B, QWEN_MODEL_3B, or QWEN_MODEL_7B."
+    #error "Model size preprocessor directive not set! Define QWEN_MODEL_0_5B, QWEN_MODEL_1_5B, QWEN_MODEL_3B, QWEN_MODEL_7B, or QWEN_MODEL_14B."
 #endif
 
     // Binary path and quant tag are composed from the model + quantization mode,
@@ -157,7 +169,12 @@ constexpr int GEMV_WARPS_PER_BLOCK = 8;
 // slightly regress, so they keep 8. The threshold is the knob to retune per GPU
 // (raise it on small-SM parts like the RTX 2070; it can be lowered toward 2048
 // on very wide GPUs such as the RTX 5090).
-constexpr int GEMV_WIDE_WARPS_PER_BLOCK = (QwenConfig::dim >= 3072) ? 16 : 8;
+// Scales with `dim`: the wider the model, the more warps per block can share the
+// (L2-resident) input vector before the kernel underfills the GPU. Tuned on the
+// RTX 3090: 14B (dim=5120) peaks at 32 warps/block (~8% faster o_proj/down_proj
+// than 16); 7B (dim=3584) at 16; smaller models at 8.
+constexpr int GEMV_WIDE_WARPS_PER_BLOCK =
+    (QwenConfig::dim >= 4096) ? 32 : (QwenConfig::dim >= 3072) ? 16 : 8;
 
 // ARGMAX_BLOCKS / ARGMAX_THREADS — parallel greedy-sampling (argmax) reduction
 // over the vocabulary. Stage 1 launches ARGMAX_BLOCKS blocks of ARGMAX_THREADS

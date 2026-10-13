@@ -28,7 +28,7 @@ From the project root, convert the Hugging Face weights into CuQwen's binary for
 python3 export_weights.py --model=<model_size> --quantization=<quant>
 ```
 
-where `model_size` is one of `0.5b`, `1.5b`, `3b`, `7b`, and `quant` is one of `fp16`, `int8`, `int4`.
+where `model_size` is one of `0.5b`, `1.5b`, `3b`, `7b`, `14b`, and `quant` is one of `fp16`, `int8`, `int4`.
 
 ### Build and Run
 
@@ -72,7 +72,7 @@ The weights for each `--quant` come from these repositories:
 | `int8` (W8A16) | `Qwen/Qwen2.5-<S>-Instruct-GPTQ-Int8` | `…-q8_0.gguf` |
 | `int4` (W4A16) | `Qwen/Qwen2.5-<S>-Instruct-GPTQ-Int4` | `…-q4_0.gguf` |
 
-where `<S>` is the model size (`0.5B`, `1.5B`, `3B`, `7B`). Weights are downloaded on demand on first use.
+where `<S>` is the model size (`0.5B`, `1.5B`, `3B`, `7B`, `14B`). Weights are downloaded on demand on first use.
 
 ### Requirements
 
@@ -127,6 +127,6 @@ python3 bench_llamacpp.py --model 7b --quant fp16
 
 ## Comprehensive Benchmark Results
 
-For the full per-depth data, averages, speedups, and decay analysis across all four model sizes (`0.5B`, `1.5B`, `3B`, `7B`) and all three precisions (`FP16`, `INT8`, `INT4`), refer to the main documentation:
+For the full per-depth data, averages, speedups, and decay analysis across all five model sizes (`0.5B`, `1.5B`, `3B`, `7B` in `FP16`/`INT8`/`INT4`, plus `14B` in `INT4`), refer to the main documentation:
 
 👉 [**CuQwen 1.2 Benchmark Analysis (RELEASE_1.2_BENCHMARK.md)**](../docs/RELEASE_1.2_BENCHMARK.md)

@@ -13,7 +13,8 @@ MODEL_MAP = {
     "0.5b": "Qwen/Qwen2.5-0.5B-Instruct",
     "1.5b": "Qwen/Qwen2.5-1.5B-Instruct",
     "3b":   "Qwen/Qwen2.5-3B-Instruct",
-    "7b":   "Qwen/Qwen2.5-7B-Instruct"
+    "7b":   "Qwen/Qwen2.5-7B-Instruct",
+    "14b":  "Qwen/Qwen2.5-14B-Instruct"
 }
 
 WEIGHTS_DIR     = "weights"
@@ -369,8 +370,8 @@ def export_tokenizer(model_dir: str):
 # =============================================================================
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Export Qwen 2.5 PyTorch/Safetensors weights and tokenizer to binary format.")
-    parser.add_argument("--model", type=str, required=True, choices=["0.5b", "1.5b", "3b", "7b"],
-                        help="Model size variant to export (0.5b, 1.5b, 3b, 7b)")
+    parser.add_argument("--model", type=str, required=True, choices=["0.5b", "1.5b", "3b", "7b", "14b"],
+                        help="Model size variant to export (0.5b, 1.5b, 3b, 7b, 14b)")
     parser.add_argument("--quantization", type=str, required=True, choices=["fp16", "int8", "int4"],
                         help="Weight precision: 'fp16' (W16A16), 'int8' (W8A16) or 'int4' (W4A16), weights-only")
 

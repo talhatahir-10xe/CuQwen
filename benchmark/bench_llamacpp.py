@@ -21,7 +21,7 @@ import argparse, glob, json, os, re, statistics, subprocess, sys
 
 WINDOWS = [(500, 1000), (3500, 4000), (7500, 8000), (11500, 12000), (15500, 16000),
            (19500, 20000), (23500, 24000), (27500, 28000), (31500, 32000)]
-SIZES = {"0.5b": "0.5B", "1.5b": "1.5B", "3b": "3B", "7b": "7B"}
+SIZES = {"0.5b": "0.5B", "1.5b": "1.5B", "3b": "3B", "7b": "7B", "14b": "14B"}
 QSUF = {"fp16": "fp16", "int8": "q8_0", "int4": "q4_0"}
 HERE = os.path.dirname(os.path.abspath(__file__))
 

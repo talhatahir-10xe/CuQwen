@@ -5,9 +5,9 @@
 CuQwen is a C++/CUDA inference engine written purely from scratch to explore the theoretical performance limits of single-user (```Batch Size 1```) autoregressive token generation using optimized custom CUDA kernels for open source Qwen models that can run on local edge devices for Nvidia GPUs.
 
 ## Performance
-Average decode speed (tokens/second) for the **Qwen2.5 Instruct** models across the 32K context window on an RTX 3090, in each supported weights-only precision. CuQwen posts the highest average throughput in every configuration.
+Average decode speed (tokens/second) for the **Qwen2.5 Instruct** models across the 32K context window on an RTX 3090, in each supported weights-only precision. CuQwen posts the highest average throughput in every configuration that fits a 24 GB GPU — and stays level with the best (llama.cpp) on the heaviest one, Qwen2.5-14B INT4.
 
-Each engine column is split into the three weights-only precisions (**FP16** W16A16, **INT8** W8A16, **INT4** W4A16).
+Each engine column is split into the three weights-only precisions (**FP16** W16A16, **INT8** W8A16, **INT4** W4A16). `✗` marks a configuration that does not fit a 24 GB RTX 3090 with the full 32K FP16 KV cache (see the note under the table).
 
 <table>
   <thead>
@@ -28,8 +28,11 @@ Each engine column is split into the three weights-only precisions (**FP16** W16
     <tr><td>1.5b</td><td align="center"><b>209</b></td><td align="center"><b>296</b></td><td align="center"><b>364</b></td><td align="center">171</td><td align="center">236</td><td align="center">286</td><td align="center">186</td><td align="center">265</td><td align="center">340</td></tr>
     <tr><td>3b</td><td align="center"><b>115</b></td><td align="center"><b>176</b></td><td align="center"><b>236</b></td><td align="center">100</td><td align="center">148</td><td align="center">193</td><td align="center">108</td><td align="center">165</td><td align="center">225</td></tr>
     <tr><td>7b</td><td align="center"><b>55</b></td><td align="center"><b>95</b></td><td align="center"><b>144</b></td><td align="center">48</td><td align="center">85</td><td align="center">125</td><td align="center">53</td><td align="center">91</td><td align="center">138</td></tr>
+    <tr><td>14b</td><td align="center">✗</td><td align="center">✗</td><td align="center"><b>66</b></td><td align="center">✗</td><td align="center">✗</td><td align="center">62</td><td align="center">✗</td><td align="center">✗</td><td align="center">66</td></tr>
   </tbody>
 </table>
+
+> **14B — INT4 only on a 24 GB GPU.** The RTX 3090 has **24 GB** of VRAM, which cannot hold Qwen2.5-14B in **FP16** (~28 GB of weights) or **INT8** (~15 GB of weights **+** ~13 GB for the 32K FP16 KV cache ≈ 28 GB) — so those cells are marked ✗ for every engine; only **INT4** (≈9 GB weights + 13 GB KV) fits the full 32K window.
 
 Complete benchmarking results and details can be found [here](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.2_BENCHMARK.md).
 
@@ -41,6 +44,7 @@ CuQwen natively supports the **Qwen2.5** model family across multiple parameter 
 * **Qwen2.5-1.5B** (`1.5b`)
 * **Qwen2.5-3B** (`3b`)
 * **Qwen2.5-7B** (`7b`)
+* **Qwen2.5-14B** (`14b`) — fits a 24 GB GPU in `int4` with the full 32K FP16 KV cache
 
 Latest Qwen model series (`Qwen 3.0`, `3.5` and `3.8`) will also be supported in next releases 
 
@@ -91,12 +95,12 @@ This builds the image, starts the container, and drops you into a shell with ful
 
 ## Building and Running Interactive Chat
 
-1. **Export Model Weights**: Convert Hugging Face weights to binary format for the target model_size (`0.5b`, `1.5b`, `3b`, or `7b`).
+1. **Export Model Weights**: Convert Hugging Face weights to binary format for the target model_size (`0.5b`, `1.5b`, `3b`, `7b`, or `14b`).
 
 ```bash
 python3 export_weights.py --model=<model_size> --quantization=<quant>
 ```
-where `model_size` is one of `0.5b`, `1.5b`, `3b`, `7b`, and `quant` is one of `fp16`, `int8`, `int4`. Both arguments are **required**.
+where `model_size` is one of `0.5b`, `1.5b`, `3b`, `7b`, `14b`, and `quant` is one of `fp16`, `int8`, `int4`. Both arguments are **required**.
 
 `--quantization=int8` / `int4` enables **weights-only quantization (W8A16 / W4A16)**: the linear-projection weights (`q/k/v/o_proj`, `gate/up/down_proj`) are stored quantized with per-group FP16 scales (128 weights per scale) and dequantized to FP16 in-kernel; `int4` additionally packs two weights per byte. Token embeddings / LM head, RMSNorm weights, biases, and the KV cache remain FP16. This shrinks the projection-weight footprint to roughly 1/2 (`int8`) or 1/4 (`int4`), e.g. Qwen2.5-3B fits comfortably in 8 GB VRAM where the FP16 model would not.
 

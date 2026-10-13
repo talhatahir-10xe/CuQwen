@@ -255,13 +255,21 @@ __global__ void gqa_attention_flashdecode_stage2_kernel(
         __syncthreads();
     }
     const float global_max = s_max_arr[0];
+    __syncthreads();   // free s_max_arr before reusing it as the rescale cache
+
+    // Each partition's softmax rescale factor exp(partial_max[s] - global_max) is
+    // identical across the sum reduction and every output dimension, so compute it
+    // once here (<= ATTN_PARTITIONS values) and cache it in shared memory. The old
+    // code re-evaluated this __expf inside the per-dimension loop (head_dim x
+    // nonempty times per head), which dominated stage-2 at long context.
+    float* rescale = s_max_arr;   // reuse (max reduction is done)
+    for (int s = tid; s < nonempty; s += bdx)
+        rescale[s] = __expf(partial_max[pslot * ATTN_PARTITIONS + s] - global_max);
+    __syncthreads();
 
     float t_sum = 0.0f;
-    for (int s = tid; s < nonempty; s += bdx) {
-        float sm = partial_max[pslot * ATTN_PARTITIONS + s];
-        float ss = partial_sum[pslot * ATTN_PARTITIONS + s];
-        t_sum += ss * __expf(sm - global_max);
-    }
+    for (int s = tid; s < nonempty; s += bdx)
+        t_sum += partial_sum[pslot * ATTN_PARTITIONS + s] * rescale[s];
     s_sum_arr[tid] = t_sum;
     __syncthreads();
     for (int stride = bdx >> 1; stride > 0; stride >>= 1) {
@@ -273,10 +281,8 @@ __global__ void gqa_attention_flashdecode_stage2_kernel(
     half* out_head = attn_out + h * head_dim;
     for (int d = tid; d < head_dim; d += bdx) {
         float final_acc = 0.0f;
-        for (int s = 0; s < nonempty; ++s) {
-            float rescale = __expf(partial_max[pslot * ATTN_PARTITIONS + s] - global_max);
-            final_acc += partial_out[(size_t)(pslot * ATTN_PARTITIONS + s) * head_dim + d] * rescale;
-        }
+        for (int s = 0; s < nonempty; ++s)
+            final_acc += partial_out[(size_t)(pslot * ATTN_PARTITIONS + s) * head_dim + d] * rescale[s];
         out_head[d] = __float2half(final_acc * inv_global_sum);
     }
 }

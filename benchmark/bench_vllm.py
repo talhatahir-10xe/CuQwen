@@ -24,7 +24,7 @@ import argparse, statistics, time
 
 WINDOWS = [(500, 1000), (3500, 4000), (7500, 8000), (11500, 12000), (15500, 16000),
            (19500, 20000), (23500, 24000), (27500, 28000), (31500, 32000)]
-SIZES = {"0.5b": "0.5B", "1.5b": "1.5B", "3b": "3B", "7b": "7B"}
+SIZES = {"0.5b": "0.5B", "1.5b": "1.5B", "3b": "3B", "7b": "7B", "14b": "14B"}
 
 DECODE_TOKENS = 500       # tokens decoded per depth window
 REPEATS       = 3         # repeats per depth (median reported)
