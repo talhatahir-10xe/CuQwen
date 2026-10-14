@@ -66,6 +66,24 @@ void launch_argmax(
 // builds and int8_t for INT8 (W8A16) builds. The scale pointers carry one FP16
 // scale per QUANT_GROUP_SIZE weights and are used only in INT8 builds (pass
 // nullptr for FP16). See load_w8() in kernels.cu for the in-kernel dequant.
+// Per-head RMSNorm over head_dim applied to Q and K in place, used by Qwen3
+// between the QKV projection and RoPE. q_norm_w / k_norm_w are [head_dim]
+// (shared across heads). Not called for Qwen2.5.
+void launch_qk_norm(
+    half* q,
+    half* k,
+    const half* q_norm_w,
+    const half* k_norm_w,
+    int n_heads,
+    int n_kv_heads,
+    int head_dim,
+    half eps,
+    cudaStream_t stream = 0
+);
+
+// `b_q/b_k/b_v` may be nullptr (Qwen3 has no QKV bias) — the bias add is then
+// skipped. When `q_norm_w`/`k_norm_w` are non-null (Qwen3) a per-head QK-RMSNorm
+// is applied to Q/K after the projection and before RoPE.
 void launch_fused_attn_block(
     const half* x,
     const half* norm_weight,
@@ -78,6 +96,8 @@ void launch_fused_attn_block(
     const half* b_q,
     const half* b_k,
     const half* b_v,
+    const half* q_norm_w,
+    const half* k_norm_w,
     half* q_out,
     half* k_out,
     half* v_out,

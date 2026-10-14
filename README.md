@@ -36,9 +36,15 @@ Each engine column is split into the three weights-only precisions (**FP16** W16
 
 Complete benchmarking results and details can be found [here](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.2_BENCHMARK.md).
 
+> The table above is the Qwen2.5 release-1.2 benchmark on the RTX 3090. **Qwen3** support landed in release 1.3; its benchmark numbers will be published separately.
+
 ## Supported Models
 
-CuQwen natively supports the **Qwen2.5** model family across multiple parameter scales, in `fp16` or weights-only `int8` (W8A16) / `int4` (W4A16) precision:
+CuQwen natively supports the **Qwen2.5** and **Qwen3** dense model families across multiple
+parameter scales, in `fp16` or weights-only `int8` (W8A16) / `int4` (W4A16) precision. The
+engine is selected at build time with two flags: `-Dmodel=<family>` and `-Dmodelsize=<size>`.
+
+**Qwen2.5** (`-Dmodel=qwen2.5`):
 
 * **Qwen2.5-0.5B** (`0.5b`)
 * **Qwen2.5-1.5B** (`1.5b`)
@@ -46,7 +52,22 @@ CuQwen natively supports the **Qwen2.5** model family across multiple parameter 
 * **Qwen2.5-7B** (`7b`)
 * **Qwen2.5-14B** (`14b`) — fits a 24 GB GPU in `int4` with the full 32K FP16 KV cache
 
-Latest Qwen model series (`Qwen 3.0`, `3.5` and `3.8`) will also be supported in next releases 
+**Qwen3** (`-Dmodel=qwen3`) — *new in release 1.3*:
+
+* **Qwen3-0.6B** (`0.6b`)
+* **Qwen3-1.7B** (`1.7b`)
+* **Qwen3-4B** (`4b`)
+* **Qwen3-8B** (`8b`)
+* **Qwen3-14B** (`14b`)
+
+Qwen3 adds per-head **QK-RMSNorm**, drops the QKV projection bias, and uses a decoupled
+`head_dim` of 128 (so the attention width is independent of the hidden size); the KV cache
+stays FP16. The engine ships with the context window capped at **8K** so the smaller Qwen3
+models fit an 8 GB GPU (e.g. RTX 2070) — raise `max_seq_len` in `include/config.h` for a
+larger GPU. Qwen3 `0.6b`/`1.7b`/`4b` have tied embeddings; `8b`/`14b` use a separate
+(quantizable) LM head.
+
+Later Qwen series (`Qwen 3.5`, `Qwen 3.8`) will be supported in future releases.
 
 ## Project Structure
 
@@ -95,25 +116,39 @@ This builds the image, starts the container, and drops you into a shell with ful
 
 ## Building and Running Interactive Chat
 
-1. **Export Model Weights**: Convert Hugging Face weights to binary format for the target model_size (`0.5b`, `1.5b`, `3b`, `7b`, or `14b`).
+1. **Export Model Weights**: Convert Hugging Face weights to CuQwen's binary format for the target family and size.
 
 ```bash
-python3 export_weights.py --model=<model_size> --quantization=<quant>
+python3 export_weights.py --model=<family> --modelsize=<size> --quantization=<quant>
 ```
-where `model_size` is one of `0.5b`, `1.5b`, `3b`, `7b`, `14b`, and `quant` is one of `fp16`, `int8`, `int4`. Both arguments are **required**.
+where `family` is `qwen2.5` or `qwen3`, `size` is one of the sizes for that family
+(`qwen2.5`: `0.5b`, `1.5b`, `3b`, `7b`, `14b` · `qwen3`: `0.6b`, `1.7b`, `4b`, `8b`, `14b`),
+and `quant` is one of `fp16`, `int8`, `int4`. All three arguments are **required**. The
+output is written to `weights/model_<family>_<quant>_<size>.bin` plus a tokenizer JSON
+(`weights/qwen25_bpe_ranks.json` or `weights/qwen3_bpe_ranks.json`).
 
-`--quantization=int8` / `int4` enables **weights-only quantization (W8A16 / W4A16)**: the linear-projection weights (`q/k/v/o_proj`, `gate/up/down_proj`) are stored quantized with per-group FP16 scales (128 weights per scale) and dequantized to FP16 in-kernel; `int4` additionally packs two weights per byte. Token embeddings / LM head, RMSNorm weights, biases, and the KV cache remain FP16. This shrinks the projection-weight footprint to roughly 1/2 (`int8`) or 1/4 (`int4`), e.g. Qwen2.5-3B fits comfortably in 8 GB VRAM where the FP16 model would not.
+`--quantization=int8` / `int4` enables **weights-only quantization (W8A16 / W4A16)**: the linear-projection weights (`q/k/v/o_proj`, `gate/up/down_proj`) are stored quantized with per-group FP16 scales (128 weights per scale) and dequantized to FP16 in-kernel; `int4` additionally packs two weights per byte. Token embeddings / LM head, RMSNorm weights, biases, Qwen3 QK-norm weights, and the KV cache remain FP16. This shrinks the projection-weight footprint to roughly 1/2 (`int8`) or 1/4 (`int4`), e.g. Qwen2.5-3B / Qwen3-4B fit comfortably in 8 GB VRAM where the FP16 model would not.
 
-2. **Build the Engine**: Specify the model size, the precision, and the target GPU compute architecture (e.g., `75` for RTX 2070, `86` for RTX 3090, `89` for RTX 4090). All three are **required**.
+2. **Build the Engine**: Specify the model family, size, precision, and target GPU compute architecture (e.g., `75` for RTX 2070, `86` for RTX 3090, `89` for RTX 4090). All four are **required**.
 
 ```bash
 mkdir -p build
 cd build
-cmake -Dmodel=<model_size> -Dquant=<quant> -Dgpu_arch=<gpu_architecture> ..
+cmake -Dmodel=<family> -Dmodelsize=<size> -Dquant=<quant> -Dgpu_arch=<gpu_architecture> ..
 make -j$(nproc)
 cd ..
 ```
-where `quant` is `fp16`, `int8` or `int4`, and **must match the `--quantization` used during export** (the engine validates this against the binary header).
+where `family`/`size` **must match** what was exported, and `quant` is `fp16`, `int8` or `int4` and **must match the `--quantization` used during export** (the engine validates the family, dimensions, and precision against the binary header).
+
+Example — Qwen3-0.6B in INT4 on an RTX 2070:
+
+```bash
+python3 export_weights.py --model=qwen3 --modelsize=0.6b --quantization=int4
+mkdir -p build && cd build
+cmake -Dmodel=qwen3 -Dmodelsize=0.6b -Dquant=int4 -Dgpu_arch=75 ..
+make -j$(nproc)
+cd ..
+```
 3. **Launch Interactive Chat**
 ```bash
 ./build/cuqwen
@@ -125,14 +160,14 @@ To run the internal benchmark suite measuring token generation latency across di
 
 1. **Export Model Weights:**
 ```bash
-python3 export_weights.py --model=<model_size> --quantization=<quant>
+python3 export_weights.py --model=<family> --modelsize=<size> --quantization=<quant>
 ```
-2. **Build and Run Benchmark Binary** (all three arguments are **required**, and `quant` must match the exported weights):
+2. **Build and Run Benchmark Binary** (all four arguments are **required**, and `family`/`size`/`quant` must match the exported weights):
 ```bash
 cd benchmark
 mkdir -p build
 cd build
-cmake -Dmodel=<model_size> -Dquant=<quant> -Dgpu_arch=<gpu_architecture> ..
+cmake -Dmodel=<family> -Dmodelsize=<size> -Dquant=<quant> -Dgpu_arch=<gpu_architecture> ..
 make -j$(nproc)
 cd ..
 ./build/cuqwen_benchmark
@@ -147,7 +182,7 @@ The following enhancements are planned for future development cycles:
 * **KV-Cache Quantization:** Support INT8/FP8 KV-cache quantization to cut attention memory bandwidth usage during long-context generation.
 * **Modern Microarchitecture Tuning:** Extend custom kernel implementations for NVIDIA Hopper (`sm_90`) and Blackwell (`sm_100`) architectures utilizing `TMA` (Tensor Memory Accelerator), `DSMEM` (Distributed Shared memory) and `DPX` instructions.
 * **Long-Context Throughput Optimization:** Further mitigate throughput decay across extended sequence lengths. ✅ *Done in release 1.1 — throughput decay across the 32K context window was cut roughly in half; see the [Release 1.1 Optimization](https://github.com/talhatahir-10xe/CuQwen/blob/main/docs/RELEASE_1.1_OPTIMIZATION.md) document.*
-* **Support for Newer Qwen Architecture Series:** Add native kernel and engine support for newer iterations in the Qwen family, including Qwen 3.0, Qwen 3.5, and Qwen 3.8 models.
+* **Support for Newer Qwen Architecture Series:** Add native kernel and engine support for newer iterations in the Qwen family. ✅ *Qwen3 dense (0.6B–14B) added in release 1.3 — per-head QK-RMSNorm, bias-free QKV, decoupled head_dim; Qwen 3.5 / 3.8 to follow.*
 
 ## Documentation
 

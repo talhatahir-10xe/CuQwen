@@ -17,11 +17,15 @@
 struct LayerWeights {
     half*      input_layernorm_weight;          // [dim]
     qweight_t* q_proj_weight;                   // [q_dim, dim]
-    half*      q_proj_bias;                      // [q_dim]
+    half*      q_proj_bias = nullptr;           // [q_dim]   (Qwen2.5 only; null for Qwen3)
     qweight_t* k_proj_weight;                   // [kv_dim, dim]
-    half*      k_proj_bias;                      // [kv_dim]
+    half*      k_proj_bias = nullptr;           // [kv_dim]  (Qwen2.5 only; null for Qwen3)
     qweight_t* v_proj_weight;                   // [kv_dim, dim]
-    half*      v_proj_bias;                      // [kv_dim]
+    half*      v_proj_bias = nullptr;           // [kv_dim]  (Qwen2.5 only; null for Qwen3)
+    // Per-head QK-RMSNorm weights, applied over head_dim before RoPE (Qwen3 only;
+    // null for Qwen2.5). Shared across all heads of the layer.
+    half*      q_norm_weight = nullptr;         // [head_dim]
+    half*      k_norm_weight = nullptr;         // [head_dim]
     qweight_t* o_proj_weight;                   // [dim, q_dim]
     half*      post_attention_layernorm_weight; // [dim]
     qweight_t* gate_proj_weight;                // [inter, dim]

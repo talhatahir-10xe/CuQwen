@@ -1,35 +1,76 @@
 cmake_minimum_required(VERSION 3.18)
 
-# 1. Compulsory Input: -Dmodel=<0.5b|1.5b|3b|7b>
+# 1. Compulsory Input: -Dmodel=<qwen2.5|qwen3>   (model family / architecture)
 if(NOT DEFINED model)
     message(FATAL_ERROR
         "\n[!] Error: 'model' variable is compulsory.\n"
-        "Please specify model size using -Dmodel=<size>.\n"
-        "Available options: 0.5b, 1.5b, 3b, 7b\n"
+        "Please specify the model family using -Dmodel=<family>.\n"
+        "Available options: qwen2.5, qwen3\n"
         "Example:\n"
-        "  cmake -Dmodel=0.5b -Dquant=fp16 -Dgpu_arch=75 ..\n"
+        "  cmake -Dmodel=qwen3 -Dmodelsize=0.6b -Dquant=int4 -Dgpu_arch=75 ..\n"
     )
 endif()
 
-string(TOLOWER "${model}" MODEL_SIZE)
+string(TOLOWER "${model}" MODEL_FAMILY)
+
+if(MODEL_FAMILY STREQUAL "qwen2.5")
+    add_compile_definitions(ARCH_QWEN25)
+    set(ARCH_NAME_STR "Qwen2.5")
+    set(VALID_SIZES "0.5b" "1.5b" "3b" "7b" "14b")
+elseif(MODEL_FAMILY STREQUAL "qwen3")
+    add_compile_definitions(ARCH_QWEN3)
+    set(ARCH_NAME_STR "Qwen3")
+    set(VALID_SIZES "0.6b" "1.7b" "4b" "8b" "14b")
+else()
+    message(FATAL_ERROR "Invalid model family '${model}'. Options are: qwen2.5, qwen3")
+endif()
+
+# 1b. Compulsory Input: -Dmodelsize=<size>   (size within the chosen family)
+if(NOT DEFINED modelsize)
+    message(FATAL_ERROR
+        "\n[!] Error: 'modelsize' variable is compulsory.\n"
+        "Please specify the model size using -Dmodelsize=<size>.\n"
+        "Available options for ${ARCH_NAME_STR}: ${VALID_SIZES}\n"
+        "Example:\n"
+        "  cmake -Dmodel=qwen3 -Dmodelsize=0.6b -Dquant=int4 -Dgpu_arch=75 ..\n"
+    )
+endif()
+
+string(TOLOWER "${modelsize}" MODEL_SIZE)
+
+list(FIND VALID_SIZES "${MODEL_SIZE}" _size_idx)
+if(_size_idx EQUAL -1)
+    message(FATAL_ERROR
+        "Invalid modelsize '${modelsize}' for family '${MODEL_FAMILY}'. Options are: ${VALID_SIZES}")
+endif()
 
 if(MODEL_SIZE STREQUAL "0.5b")
-    add_compile_definitions(QWEN_MODEL_0_5B)
+    add_compile_definitions(QWEN_SIZE_0_5B)
     set(MODEL_NAME_STR "0.5B")
+elseif(MODEL_SIZE STREQUAL "0.6b")
+    add_compile_definitions(QWEN_SIZE_0_6B)
+    set(MODEL_NAME_STR "0.6B")
 elseif(MODEL_SIZE STREQUAL "1.5b")
-    add_compile_definitions(QWEN_MODEL_1_5B)
+    add_compile_definitions(QWEN_SIZE_1_5B)
     set(MODEL_NAME_STR "1.5B")
+elseif(MODEL_SIZE STREQUAL "1.7b")
+    add_compile_definitions(QWEN_SIZE_1_7B)
+    set(MODEL_NAME_STR "1.7B")
 elseif(MODEL_SIZE STREQUAL "3b")
-    add_compile_definitions(QWEN_MODEL_3B)
+    add_compile_definitions(QWEN_SIZE_3B)
     set(MODEL_NAME_STR "3B")
+elseif(MODEL_SIZE STREQUAL "4b")
+    add_compile_definitions(QWEN_SIZE_4B)
+    set(MODEL_NAME_STR "4B")
 elseif(MODEL_SIZE STREQUAL "7b")
-    add_compile_definitions(QWEN_MODEL_7B)
+    add_compile_definitions(QWEN_SIZE_7B)
     set(MODEL_NAME_STR "7B")
+elseif(MODEL_SIZE STREQUAL "8b")
+    add_compile_definitions(QWEN_SIZE_8B)
+    set(MODEL_NAME_STR "8B")
 elseif(MODEL_SIZE STREQUAL "14b")
-    add_compile_definitions(QWEN_MODEL_14B)
+    add_compile_definitions(QWEN_SIZE_14B)
     set(MODEL_NAME_STR "14B")
-else()
-    message(FATAL_ERROR "Invalid model option '${model}'. Options are: 0.5b, 1.5b, 3b, 7b, 14b")
 endif()
 
 # 1b. Compulsory Input: -Dquant=<fp16|int8|int4>. Must match the mode used by

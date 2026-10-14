@@ -9,16 +9,31 @@ from huggingface_hub import snapshot_download
 # =============================================================================
 # Constants & Model Mapping
 # =============================================================================
+# Model family -> { size -> HuggingFace repo }. Qwen3 dense repos are the base
+# (hybrid-thinking) checkpoints; Qwen2.5 uses the Instruct checkpoints.
 MODEL_MAP = {
-    "0.5b": "Qwen/Qwen2.5-0.5B-Instruct",
-    "1.5b": "Qwen/Qwen2.5-1.5B-Instruct",
-    "3b":   "Qwen/Qwen2.5-3B-Instruct",
-    "7b":   "Qwen/Qwen2.5-7B-Instruct",
-    "14b":  "Qwen/Qwen2.5-14B-Instruct"
+    "qwen2.5": {
+        "0.5b": "Qwen/Qwen2.5-0.5B-Instruct",
+        "1.5b": "Qwen/Qwen2.5-1.5B-Instruct",
+        "3b":   "Qwen/Qwen2.5-3B-Instruct",
+        "7b":   "Qwen/Qwen2.5-7B-Instruct",
+        "14b":  "Qwen/Qwen2.5-14B-Instruct",
+    },
+    "qwen3": {
+        "0.6b": "Qwen/Qwen3-0.6B",
+        "1.7b": "Qwen/Qwen3-1.7B",
+        "4b":   "Qwen/Qwen3-4B",
+        "8b":   "Qwen/Qwen3-8B",
+        "14b":  "Qwen/Qwen3-14B",
+    },
 }
 
+# Arch tag used in output filenames + arch id written to the binary header.
+# Must match ARCH_TAG / arch_id in include/config.h.
+ARCH_TAG = {"qwen2.5": "qwen25", "qwen3": "qwen3"}
+ARCH_ID  = {"qwen2.5": 0, "qwen3": 1}
+
 WEIGHTS_DIR     = "weights"
-OUTPUT_BPE_PATH = os.path.join(WEIGHTS_DIR, "qwen25_bpe_ranks.json")
 MAGIC_NUMBER    = 0x5157454E   # ASCII "QWEN"
 
 # Quantization type tags written into the binary header (must match config.h)
@@ -205,12 +220,16 @@ def write_int4(file_obj, arr: np.ndarray, group: int = QUANT_GROUP) -> int:
     return len(w_bytes) + len(s_bytes)
 
 
-def export_weights(model_dir: str, model_size: str, quant: str):
+def export_weights(model_dir: str, arch: str, model_size: str, quant: str):
     os.makedirs(WEIGHTS_DIR, exist_ok=True)
     quant_tag    = quant
     quant_type   = QUANT_TYPE_ID[quant]
+    arch_tag     = ARCH_TAG[arch]
+    arch_id      = ARCH_ID[arch]
     is_quantized = (quant != "fp16")
-    out_bin_path = os.path.join(WEIGHTS_DIR, f"model_{quant_tag}_{model_size.replace('.', '_')}.bin")
+    out_bin_path = os.path.join(
+        WEIGHTS_DIR, f"model_{arch_tag}_{quant_tag}_{model_size.replace('.', '_')}.bin"
+    )
 
     # For quantized builds, only the linear-projection weights are quantized;
     # everything else (embeddings/LM head, RMSNorm weights, biases) stays FP16.
@@ -254,6 +273,14 @@ def export_weights(model_dir: str, model_size: str, quant: str):
 
     reader = MultiShardSafetensors(model_dir)
 
+    # Derive the attention layout from the checkpoint itself (robust across both
+    # families): Qwen2.5 carries q/k/v_proj biases and no QK-norm; Qwen3 drops the
+    # biases and adds per-head q_norm/k_norm. The C++ loader uses the same order.
+    has_qkv_bias = reader.contains("self_attn.q_proj.bias")
+    has_qk_norm  = reader.contains("self_attn.q_norm")
+    print(f"  │ • QKV bias:         {has_qkv_bias}")
+    print(f"  │ • QK-Norm:          {has_qk_norm}")
+
     # The LM head is the single largest tensor read every decode step. When it is
     # a SEPARATE (untied) tensor and we are building a quantized model, store it
     # INT8 (W8A16) too: this halves its per-token bandwidth with negligible logit
@@ -266,12 +293,13 @@ def export_weights(model_dir: str, model_size: str, quant: str):
 
     with open(out_bin_path, "wb") as f:
         # Header (256 bytes). Field 10 (lm_head_fmt) flags the LM-head precision
-        # (0 = FP16/tied, 1 = INT8); older files have 0 here from zero padding.
+        # (0 = FP16/tied, 1 = INT8); field 11 (arch_id) is the family (0 = Qwen2.5,
+        # 1 = Qwen3). Older files have 0 in fields 10/11 from zero padding.
         header = struct.pack(
-            "iiiiiiiiiii",
+            "iiiiiiiiiiii",
             MAGIC_NUMBER, vocab_size, dim, intermediate_size,
             n_layers, n_heads, n_kv_heads, head_dim, max_seq_len,
-            quant_type, lm_head_fmt,
+            quant_type, lm_head_fmt, arch_id,
         )
 
         f.write(header)
@@ -290,13 +318,22 @@ def export_weights(model_dir: str, model_size: str, quant: str):
             total_bytes += write_fp16(f, reader.get_tensor(f"{p}.input_layernorm.weight"))
 
             total_bytes += write_proj(f, reader.get_tensor(f"{p}.self_attn.q_proj.weight"))
-            total_bytes += write_fp16(f, reader.get_tensor(f"{p}.self_attn.q_proj.bias"))
+            if has_qkv_bias:
+                total_bytes += write_fp16(f, reader.get_tensor(f"{p}.self_attn.q_proj.bias"))
 
             total_bytes += write_proj(f, reader.get_tensor(f"{p}.self_attn.k_proj.weight"))
-            total_bytes += write_fp16(f, reader.get_tensor(f"{p}.self_attn.k_proj.bias"))
+            if has_qkv_bias:
+                total_bytes += write_fp16(f, reader.get_tensor(f"{p}.self_attn.k_proj.bias"))
 
             total_bytes += write_proj(f, reader.get_tensor(f"{p}.self_attn.v_proj.weight"))
-            total_bytes += write_fp16(f, reader.get_tensor(f"{p}.self_attn.v_proj.bias"))
+            if has_qkv_bias:
+                total_bytes += write_fp16(f, reader.get_tensor(f"{p}.self_attn.v_proj.bias"))
+
+            # Qwen3: per-head QK-RMSNorm weights (FP16), placed after the QKV
+            # projections and before o_proj — matching the C++ loader order.
+            if has_qk_norm:
+                total_bytes += write_fp16(f, reader.get_tensor(f"{p}.self_attn.q_norm.weight"))
+                total_bytes += write_fp16(f, reader.get_tensor(f"{p}.self_attn.k_norm.weight"))
 
             total_bytes += write_proj(f, reader.get_tensor(f"{p}.self_attn.o_proj.weight"))
 
@@ -325,7 +362,7 @@ def export_weights(model_dir: str, model_size: str, quant: str):
     print(f"  │ [✔] Binary Export Complete → '{out_bin_path}' ({total_bytes / (1024**2):.2f} MB)")
 
 
-def export_tokenizer(model_dir: str):
+def export_tokenizer(model_dir: str, out_bpe_path: str):
     print_section("4. Exporting Tokenizer Resources")
     vocab_path     = os.path.join(model_dir, "vocab.json")
     tokenizer_path = os.path.join(model_dir, "tokenizer.json")
@@ -359,36 +396,43 @@ def export_tokenizer(model_dir: str):
         "added_tokens":   added_tokens,
     }
 
-    with open(OUTPUT_BPE_PATH, "w", encoding="utf-8") as f:
+    with open(out_bpe_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-    print(f"  │ [✔] Tokenizer JSON Export Complete → '{OUTPUT_BPE_PATH}'")
+    print(f"  │ [✔] Tokenizer JSON Export Complete → '{out_bpe_path}'")
 
 
 # =============================================================================
 # Main
 # =============================================================================
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Export Qwen 2.5 PyTorch/Safetensors weights and tokenizer to binary format.")
-    parser.add_argument("--model", type=str, required=True, choices=["0.5b", "1.5b", "3b", "7b", "14b"],
-                        help="Model size variant to export (0.5b, 1.5b, 3b, 7b, 14b)")
+    parser = argparse.ArgumentParser(description="Export Qwen2.5 / Qwen3 PyTorch/Safetensors weights and tokenizer to CuQwen binary format.")
+    parser.add_argument("--model", type=str, required=True, choices=["qwen2.5", "qwen3"],
+                        help="Model family / architecture (qwen2.5 or qwen3)")
+    parser.add_argument("--modelsize", type=str, required=True,
+                        help="Model size within the family (qwen2.5: 0.5b,1.5b,3b,7b,14b | qwen3: 0.6b,1.7b,4b,8b,14b)")
     parser.add_argument("--quantization", type=str, required=True, choices=["fp16", "int8", "int4"],
                         help="Weight precision: 'fp16' (W16A16), 'int8' (W8A16) or 'int4' (W4A16), weights-only")
 
     if len(sys.argv) == 1:
         parser.print_help()
-        print("\nBoth --model and --quantization are required. Example commands:")
-        print("  python3 export_weights.py --model=0.5b --quantization=fp16")
-        print("  python3 export_weights.py --model=1.5b --quantization=int8")
-        print("  python3 export_weights.py --model=3b  --quantization=int4")
-        print("  python3 export_weights.py --model=7b  --quantization=fp16")
+        print("\n--model, --modelsize and --quantization are required. Example commands:")
+        print("  python3 export_weights.py --model=qwen3   --modelsize=0.6b --quantization=int4")
+        print("  python3 export_weights.py --model=qwen3   --modelsize=1.7b --quantization=int8")
+        print("  python3 export_weights.py --model=qwen2.5 --modelsize=3b   --quantization=fp16")
         sys.exit(1)
 
     args = parser.parse_args()
 
-    print_header(f"CUQWEN: {args.quantization.upper()} WEIGHT & TOKENIZER EXPORTER")
-    repo_id = MODEL_MAP[args.model]
+    if args.modelsize not in MODEL_MAP[args.model]:
+        valid = ", ".join(MODEL_MAP[args.model].keys())
+        print(f"[!] Invalid --modelsize '{args.modelsize}' for --model '{args.model}'. Valid sizes: {valid}")
+        sys.exit(1)
+
+    print_header(f"CUQWEN: {args.model.upper()} {args.quantization.upper()} WEIGHT & TOKENIZER EXPORTER")
+    repo_id = MODEL_MAP[args.model][args.modelsize]
+    out_bpe_path = os.path.join(WEIGHTS_DIR, f"{ARCH_TAG[args.model]}_bpe_ranks.json")
     model_dir = download_model(repo_id)
-    export_weights(model_dir, args.model, args.quantization)
-    export_tokenizer(model_dir)
+    export_weights(model_dir, args.model, args.modelsize, args.quantization)
+    export_tokenizer(model_dir, out_bpe_path)
     print_header("ALL EXPORTS COMPLETED SUCCESSFULLY")

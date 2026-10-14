@@ -9,8 +9,12 @@ void malloc_qwen_state(const QwenConfig& config, QwenState& state) {
     const size_t inter         = config.intermediate_size;
     const size_t kv_cache_size = (size_t)config.n_layers * config.n_kv_heads * config.max_seq_len * config.head_dim;
 
+    // xb holds the attention output (q_dim = n_heads*head_dim elements) before
+    // o_proj. In Qwen3 head_dim is decoupled from dim, so q_dim can exceed dim
+    // (e.g. 0.6B: dim=1024, q_dim=2048) — size xb to the larger of the two.
+    const size_t xb_elems = (q_dim > dim) ? q_dim : dim;
     CUDA_CHECK(cudaMalloc(&state.x, dim * sizeof(half)));
-    CUDA_CHECK(cudaMalloc(&state.xb, dim * sizeof(half)));
+    CUDA_CHECK(cudaMalloc(&state.xb, xb_elems * sizeof(half)));
     CUDA_CHECK(cudaMalloc(&state.q, q_dim * sizeof(half)));
     CUDA_CHECK(cudaMalloc(&state.k, kv_dim * sizeof(half)));
     CUDA_CHECK(cudaMalloc(&state.v, kv_dim * sizeof(half)));
@@ -102,6 +106,7 @@ static void qwen_forward_graph_body(
             lw.q_proj_weight, lw.k_proj_weight, lw.v_proj_weight,
             lw.q_proj_scale, lw.k_proj_scale, lw.v_proj_scale,
             lw.q_proj_bias, lw.k_proj_bias, lw.v_proj_bias,
+            lw.q_norm_weight, lw.k_norm_weight,
             state.q, state.k, state.v,
             dim, q_dim, kv_dim,
             config.n_heads, config.n_kv_heads, head_dim,

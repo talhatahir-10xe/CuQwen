@@ -52,7 +52,96 @@ using qweight_t = half;                 // FP16 build: weights stored directly a
 struct QwenConfig {
     static constexpr int32_t magic = 0x5157454E;
 
-#if defined(QWEN_MODEL_0_5B)
+// ---------------------------------------------------------------------------
+// Model family / architecture (selected at compile time via -Dmodel=<family>).
+//   has_qkv_bias : Qwen2.5 adds a learned bias to q/k/v_proj; Qwen3 does not.
+//   has_qk_norm  : Qwen3 applies a per-head RMSNorm to Q and K (over head_dim,
+//                  learned q_norm/k_norm weights) after projection, before RoPE.
+//                  Qwen2.5 has neither q_norm/k_norm.
+//   arch_id      : written into / validated against the binary header
+//                  (0 = Qwen2.5, 1 = Qwen3).
+// NOTE: max_seq_len is deliberately capped at 8K here so the FP16 KV cache fits
+// an 8 GB GPU (RTX 2070); Qwen3's native context is 40960. Raise per GPU.
+// ---------------------------------------------------------------------------
+#if defined(ARCH_QWEN3)
+    static constexpr const char* arch_name = "Qwen3";
+    #define ARCH_TAG "qwen3"
+    static constexpr int32_t arch_id    = 1;
+    static constexpr bool has_qkv_bias  = false;
+    static constexpr bool has_qk_norm   = true;
+
+    #if defined(QWEN_SIZE_0_6B)
+    static constexpr const char* model_name = "0.6B";
+    #define MODEL_TAG "0_6b"
+    static constexpr int32_t vocab_size        = 151936;
+    static constexpr int32_t dim               = 1024;
+    static constexpr int32_t intermediate_size = 3072;
+    static constexpr int32_t n_layers          = 28;
+    static constexpr int32_t n_heads           = 16;
+    static constexpr int32_t n_kv_heads        = 8;
+    static constexpr int32_t head_dim          = 128;
+    static constexpr int32_t max_seq_len       = 8192;
+
+    #elif defined(QWEN_SIZE_1_7B)
+    static constexpr const char* model_name = "1.7B";
+    #define MODEL_TAG "1_7b"
+    static constexpr int32_t vocab_size        = 151936;
+    static constexpr int32_t dim               = 2048;
+    static constexpr int32_t intermediate_size = 6144;
+    static constexpr int32_t n_layers          = 28;
+    static constexpr int32_t n_heads           = 16;
+    static constexpr int32_t n_kv_heads        = 8;
+    static constexpr int32_t head_dim          = 128;
+    static constexpr int32_t max_seq_len       = 8192;
+
+    #elif defined(QWEN_SIZE_4B)
+    static constexpr const char* model_name = "4B";
+    #define MODEL_TAG "4b"
+    static constexpr int32_t vocab_size        = 151936;
+    static constexpr int32_t dim               = 2560;
+    static constexpr int32_t intermediate_size = 9728;
+    static constexpr int32_t n_layers          = 36;
+    static constexpr int32_t n_heads           = 32;
+    static constexpr int32_t n_kv_heads        = 8;
+    static constexpr int32_t head_dim          = 128;
+    static constexpr int32_t max_seq_len       = 8192;
+
+    #elif defined(QWEN_SIZE_8B)
+    static constexpr const char* model_name = "8B";
+    #define MODEL_TAG "8b"
+    static constexpr int32_t vocab_size        = 151936;
+    static constexpr int32_t dim               = 4096;
+    static constexpr int32_t intermediate_size = 12288;
+    static constexpr int32_t n_layers          = 36;
+    static constexpr int32_t n_heads           = 32;
+    static constexpr int32_t n_kv_heads        = 8;
+    static constexpr int32_t head_dim          = 128;
+    static constexpr int32_t max_seq_len       = 8192;
+
+    #elif defined(QWEN_SIZE_14B)
+    static constexpr const char* model_name = "14B";
+    #define MODEL_TAG "14b"
+    static constexpr int32_t vocab_size        = 151936;
+    static constexpr int32_t dim               = 5120;
+    static constexpr int32_t intermediate_size = 17408;
+    static constexpr int32_t n_layers          = 40;
+    static constexpr int32_t n_heads           = 40;
+    static constexpr int32_t n_kv_heads        = 8;
+    static constexpr int32_t head_dim          = 128;
+    static constexpr int32_t max_seq_len       = 8192;
+
+    #else
+    #error "Qwen3 size not set! Define QWEN_SIZE_0_6B, QWEN_SIZE_1_7B, QWEN_SIZE_4B, QWEN_SIZE_8B, or QWEN_SIZE_14B."
+    #endif
+
+#elif defined(ARCH_QWEN25)
+    static constexpr const char* arch_name = "Qwen2.5";
+    #define ARCH_TAG "qwen25"
+    static constexpr int32_t arch_id    = 0;
+    static constexpr bool has_qkv_bias  = true;
+    static constexpr bool has_qk_norm   = false;
+
+    #if defined(QWEN_SIZE_0_5B)
     static constexpr const char* model_name = "0.5B";
     #define MODEL_TAG "0_5b"
     static constexpr int32_t vocab_size        = 151936;
@@ -64,7 +153,7 @@ struct QwenConfig {
     static constexpr int32_t head_dim          = 64;
     static constexpr int32_t max_seq_len       = 32768;
 
-#elif defined(QWEN_MODEL_1_5B)
+    #elif defined(QWEN_SIZE_1_5B)
     static constexpr const char* model_name = "1.5B";
     #define MODEL_TAG "1_5b"
     static constexpr int32_t vocab_size        = 151936;
@@ -76,7 +165,7 @@ struct QwenConfig {
     static constexpr int32_t head_dim          = 128;
     static constexpr int32_t max_seq_len       = 32768;
 
-#elif defined(QWEN_MODEL_3B)
+    #elif defined(QWEN_SIZE_3B)
     static constexpr const char* model_name = "3B";
     #define MODEL_TAG "3b"
     static constexpr int32_t vocab_size        = 151936;
@@ -88,7 +177,7 @@ struct QwenConfig {
     static constexpr int32_t head_dim          = 128;
     static constexpr int32_t max_seq_len       = 32768;
 
-#elif defined(QWEN_MODEL_7B)
+    #elif defined(QWEN_SIZE_7B)
     static constexpr const char* model_name = "7B";
     #define MODEL_TAG "7b"
     static constexpr int32_t vocab_size        = 152064;
@@ -100,7 +189,7 @@ struct QwenConfig {
     static constexpr int32_t head_dim          = 128;
     static constexpr int32_t max_seq_len       = 32768;
 
-#elif defined(QWEN_MODEL_14B)
+    #elif defined(QWEN_SIZE_14B)
     static constexpr const char* model_name = "14B";
     #define MODEL_TAG "14b"
     static constexpr int32_t vocab_size        = 152064;
@@ -112,14 +201,19 @@ struct QwenConfig {
     static constexpr int32_t head_dim          = 128;
     static constexpr int32_t max_seq_len       = 32768;
 
+    #else
+    #error "Qwen2.5 size not set! Define QWEN_SIZE_0_5B, QWEN_SIZE_1_5B, QWEN_SIZE_3B, QWEN_SIZE_7B, or QWEN_SIZE_14B."
+    #endif
+
 #else
-    #error "Model size preprocessor directive not set! Define QWEN_MODEL_0_5B, QWEN_MODEL_1_5B, QWEN_MODEL_3B, QWEN_MODEL_7B, or QWEN_MODEL_14B."
+    #error "Model family not set! Compile with -Dmodel=qwen2.5 or -Dmodel=qwen3 (defines ARCH_QWEN25 / ARCH_QWEN3)."
 #endif
 
-    // Binary path and quant tag are composed from the model + quantization mode,
-    // e.g. "weights/model_int8_3b.bin". (Adjacent string literals concatenate.)
-    static constexpr const char* bin_path   = "weights/model_" QUANT_TAG "_" MODEL_TAG ".bin";
-    static constexpr int32_t quant_type     = QUANT_TYPE_ID;
+    // Binary and tokenizer paths are composed from the arch + quant + size, e.g.
+    // "weights/model_qwen3_int4_0_6b.bin". (Adjacent string literals concatenate.)
+    static constexpr const char* bin_path       = "weights/model_" ARCH_TAG "_" QUANT_TAG "_" MODEL_TAG ".bin";
+    static constexpr const char* tokenizer_path = "weights/" ARCH_TAG "_bpe_ranks.json";
+    static constexpr int32_t quant_type         = QUANT_TYPE_ID;
 
     static constexpr float norm_eps           = 1e-6f;
     static constexpr float rope_theta          = 1000000.0f;

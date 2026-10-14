@@ -435,21 +435,21 @@ __global__ void fused_attn_block_kernel(
     const bool is_k = (out_idx >= q_dim && out_idx < q_dim + kv_dim);
     if (is_q) {
         W_row = W_q + (size_t)out_idx * WEIGHT_ROW_STRIDE(dim);
-        bias_val = __half2float(b_q[out_idx]);
+        bias_val = b_q ? __half2float(b_q[out_idx]) : 0.0f;   // Qwen3 has no QKV bias
 #ifdef QUANT_ENABLED
         W_srow = W_q_scale + (size_t)out_idx * grp_dim;
 #endif
     } else if (is_k) {
         int ki = out_idx - q_dim;
         W_row = W_k + (size_t)ki * WEIGHT_ROW_STRIDE(dim);
-        bias_val = __half2float(b_k[ki]);
+        bias_val = b_k ? __half2float(b_k[ki]) : 0.0f;
 #ifdef QUANT_ENABLED
         W_srow = W_k_scale + (size_t)ki * grp_dim;
 #endif
     } else {
         int vi = out_idx - q_dim - kv_dim;
         W_row = W_v + (size_t)vi * WEIGHT_ROW_STRIDE(dim);
-        bias_val = __half2float(b_v[vi]);
+        bias_val = b_v ? __half2float(b_v[vi]) : 0.0f;
 #ifdef QUANT_ENABLED
         W_srow = W_v_scale + (size_t)vi * grp_dim;
 #endif
@@ -473,6 +473,57 @@ __global__ void fused_attn_block_kernel(
     }
 }
 
+// Per-head QK-RMSNorm (Qwen3): one block per (query or key) head, one thread per
+// head_dim element. Normalizes each head vector in place over head_dim and scales
+// by the per-element norm weight. Runs between the QKV projection and RoPE.
+__global__ void qk_norm_kernel(
+    half* __restrict__ q,
+    half* __restrict__ k,
+    const half* __restrict__ q_norm_w,
+    const half* __restrict__ k_norm_w,
+    int n_heads,
+    int head_dim,
+    float eps
+) {
+    const int head  = blockIdx.x;
+    const bool is_q = (head < n_heads);
+    half*       buf = is_q ? q : k;
+    const half* w   = is_q ? q_norm_w : k_norm_w;
+    const int   h   = is_q ? head : (head - n_heads);
+    half* vec = buf + (size_t)h * head_dim;
+
+    const int t = threadIdx.x;
+    __shared__ float s_mem[32];
+    float v  = (t < head_dim) ? __half2float(vec[t]) : 0.0f;
+    float ss = block_reduce_sum(v * v, s_mem);
+
+    __shared__ float inv_rms;
+    if (t == 0) inv_rms = rsqrtf(ss / (float)head_dim + eps);
+    __syncthreads();
+
+    if (t < head_dim)
+        vec[t] = __float2half(v * inv_rms * __half2float(w[t]));
+}
+
+void launch_qk_norm(
+    half* q,
+    half* k,
+    const half* q_norm_w,
+    const half* k_norm_w,
+    int n_heads,
+    int n_kv_heads,
+    int head_dim,
+    half eps,
+    cudaStream_t stream
+) {
+    int blocks  = n_heads + n_kv_heads;   // one block per Q head then per K head
+    int threads = head_dim;               // head_dim is a multiple of 32 (128)
+    qk_norm_kernel<<<blocks, threads, 0, stream>>>(
+        q, k, q_norm_w, k_norm_w, n_heads, head_dim, __half2float(eps)
+    );
+    CUDA_CHECK(cudaGetLastError());
+}
+
 void launch_fused_attn_block(
     const half* x,
     const half* norm_weight,
@@ -485,6 +536,8 @@ void launch_fused_attn_block(
     const half* b_q,
     const half* b_k,
     const half* b_v,
+    const half* q_norm_w,
+    const half* k_norm_w,
     half* q_out,
     half* k_out,
     half* v_out,
@@ -499,7 +552,7 @@ void launch_fused_attn_block(
     half eps,
     cudaStream_t stream
 ) {
-    (void)norm_weight; (void)eps; // x is already RMS-normalized upstream
+    (void)norm_weight; // x is already RMS-normalized upstream
     int total = q_dim + (2 * kv_dim);
     int threads = QKV_WARPS_PER_BLOCK * 32;
     int blocks = (total + QKV_WARPS_PER_BLOCK - 1) / QKV_WARPS_PER_BLOCK;
@@ -509,6 +562,12 @@ void launch_fused_attn_block(
         q_out, k_out, v_out, dim, q_dim, kv_dim
     );
     CUDA_CHECK(cudaGetLastError());
+
+    // Qwen3: per-head QK-RMSNorm after projection, before RoPE.
+    if (q_norm_w != nullptr && k_norm_w != nullptr) {
+        launch_qk_norm(q_out, k_out, q_norm_w, k_norm_w,
+                       n_heads, n_kv_heads, head_dim, eps, stream);
+    }
 
     int total_rotations = (n_heads + n_kv_heads) * (head_dim / 2);
     int rope_blocks = (total_rotations + threads - 1) / threads;

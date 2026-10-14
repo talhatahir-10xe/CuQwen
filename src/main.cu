@@ -13,10 +13,11 @@
 
 int main(int argc, char** argv) {
     std::cout << "========================================================================\n";
-    std::cout << "         CUQWEN: Bare-Metal CUDA Chat Engine (Qwen2.5 " << QwenConfig::model_name << ")\n";
+    std::cout << "         CUQWEN: Bare-Metal CUDA Chat Engine (" << QwenConfig::arch_name
+              << " " << QwenConfig::model_name << ")\n";
     std::cout << "========================================================================\n" << std::endl;
 
-    std::string tokenizer_path = "weights/qwen25_bpe_ranks.json";
+    std::string tokenizer_path = QwenConfig::tokenizer_path;
     std::cout << "[*] Loading Tokenizer from: " << tokenizer_path << "..." << std::flush;
     QwenTokenizer tokenizer(tokenizer_path);
     std::cout << " Done." << std::endl;

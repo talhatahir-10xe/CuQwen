@@ -21,23 +21,25 @@ The native benchmark samples throughput at **9 context depths** (a timed 0.5K de
 
 ### Export Model Weights
 
-From the project root, convert the Hugging Face weights into CuQwen's binary format. Both arguments are **required**:
+From the project root, convert the Hugging Face weights into CuQwen's binary format. All three arguments are **required**:
 
 ```bash
 # From project root
-python3 export_weights.py --model=<model_size> --quantization=<quant>
+python3 export_weights.py --model=<family> --modelsize=<size> --quantization=<quant>
 ```
 
-where `model_size` is one of `0.5b`, `1.5b`, `3b`, `7b`, `14b`, and `quant` is one of `fp16`, `int8`, `int4`.
+where `family` is `qwen2.5` or `qwen3`, `size` is one of that family's sizes
+(`qwen2.5`: `0.5b`, `1.5b`, `3b`, `7b`, `14b` · `qwen3`: `0.6b`, `1.7b`, `4b`, `8b`, `14b`),
+and `quant` is one of `fp16`, `int8`, `int4`.
 
 ### Build and Run
 
-Build the benchmark executable from within the `benchmark/` folder. All three arguments are **required**, and `-Dquant` **must match** the precision used during export:
+Build the benchmark executable from within the `benchmark/` folder. All four arguments are **required**, and `-Dmodel`/`-Dmodelsize`/`-Dquant` **must match** what was used during export:
 
 ```bash
 cd benchmark
 mkdir -p build && cd build
-cmake -Dmodel=<model_size> -Dquant=<quant> -Dgpu_arch=<gpu_architecture> ..
+cmake -Dmodel=<family> -Dmodelsize=<size> -Dquant=<quant> -Dgpu_arch=<gpu_architecture> ..
 make -j$(nproc)
 cd ..
 
@@ -46,6 +48,21 @@ cd ..
 ```
 
 `gpu_architecture` examples: `75` (RTX 2070), `86` (RTX 3090), `89` (RTX 4090), `90` (H100).
+
+Example — Qwen3-8B in INT4 on an RTX 3090:
+
+```bash
+# from project root
+python3 export_weights.py --model=qwen3 --modelsize=8b --quantization=int4
+cd benchmark && mkdir -p build && cd build
+cmake -Dmodel=qwen3 -Dmodelsize=8b -Dquant=int4 -Dgpu_arch=86 ..
+make -j$(nproc) && cd ..
+./build/cuqwen_benchmark
+```
+
+> **Note:** `include/config.h` caps `max_seq_len` at 8K for Qwen3 so the small models fit an
+> 8 GB GPU. The benchmark samples depths up to 32K, so raise `max_seq_len` back to `32768`
+> (and re-export/rebuild) before running the full-context Qwen3 benchmark on a larger GPU.
 
 ### Reported Metrics
 
@@ -59,20 +76,35 @@ $$\text{Decay Rate} = \frac{\text{Speed}_{1\text{K}} - \text{Speed}_{32\text{K}}
 
 ## 2. vLLM & llama.cpp Benchmarks
 
-`bench_vllm.py` and `bench_llamacpp.py` measure the same single-stream decode throughput on the two reference engines, across 9 context depths (`500, 3500, 7500, …, 31500`), decoding 500 tokens at each. Both scripts take `--model` and `--quant` and require them; there are no default configurations, and results are printed to stdout.
+`bench_vllm.py` and `bench_llamacpp.py` measure the same single-stream decode throughput on the two reference engines, across 9 context depths (`500, 3500, 7500, …, 31500`), decoding 500 tokens at each. Both scripts take `--model` (family), `--modelsize`, and `--quant`, all required; there are no default configurations, and results are printed to stdout. (These mirror CuQwen's own `-Dmodel`/`-Dmodelsize`/`-Dquant` flags.)
 
 * **`bench_vllm.py`** — runs vLLM (FlashAttention + CUDA graphs); decode is timed from the engine's first→last generated-token interval, so prefill is excluded.
 * **`bench_llamacpp.py`** — wraps the native `llama-bench` (CUDA graphs + FlashAttention, all layers on GPU), pulling the official Qwen GGUF weights.
 
-The weights for each `--quant` come from these repositories:
+The weights for each `--quant` are auto-selected from these repositories (`<S>` is the HF size tag, e.g. `3B` or `8B`):
 
-| `--quant` | vLLM repo | llama.cpp GGUF |
+**Qwen2.5** (`--model qwen2.5`, sizes `0.5b/1.5b/3b/7b/14b`):
+
+| `--quant` | vLLM repo | llama.cpp GGUF (`Qwen/Qwen2.5-<S>-Instruct-GGUF`) |
 |-----------|-----------|----------------|
 | `fp16` (W16A16) | `Qwen/Qwen2.5-<S>-Instruct` | `…-fp16.gguf` |
 | `int8` (W8A16) | `Qwen/Qwen2.5-<S>-Instruct-GPTQ-Int8` | `…-q8_0.gguf` |
 | `int4` (W4A16) | `Qwen/Qwen2.5-<S>-Instruct-GPTQ-Int4` | `…-q4_0.gguf` |
 
-where `<S>` is the model size (`0.5B`, `1.5B`, `3B`, `7B`, `14B`). Weights are downloaded on demand on first use.
+**Qwen3** (`--model qwen3`, sizes `0.6b/1.7b/4b/8b/14b`) — Qwen's official quantizations differ from Qwen2.5, so the defaults differ too:
+
+| `--quant` | vLLM repo | llama.cpp GGUF (`Qwen/Qwen3-<S>-GGUF`) |
+|-----------|-----------|----------------|
+| `fp16` (W16A16) | `Qwen/Qwen3-<S>` | *(no official full-precision GGUF — pass `--gguf PATH`)* |
+| `int8` (W8A16) | *(no official W8A16 repo — pass `--repo PATH`)* | `…-Q8_0.gguf` |
+| `int4` (W4A16) | `Qwen/Qwen3-<S>-AWQ` *(only `4b`/`8b`/`14b`)* | `…-Q4_K_M.gguf` |
+
+Qwen3 caveats (why some cells need an override):
+- **vLLM `int8`:** Qwen ships Qwen3 as FP8 (W8A8), not a weights-only W8A16 GPTQ build, so there is no like-for-like repo. Pass `--repo <hf_repo>` with a third-party GPTQ-Int8 checkpoint to benchmark it.
+- **vLLM `int4`:** official 4-bit is AWQ (`Qwen/Qwen3-<S>-AWQ`), published only for `4b`/`8b`/`14b`; for `0.6b`/`1.7b` pass `--repo`.
+- **llama.cpp:** the official GGUF repo has no `fp16` file and no legacy `q4_0`; the closest official 4-bit is `Q4_K_M`, and `0.6b`/`1.7b` ship only `Q8_0`. Pass `--gguf PATH` to benchmark any other GGUF (e.g. an `fp16`/`q4_0` build you convert yourself). GGUF names are matched case-insensitively.
+
+Weights are downloaded on demand on first use.
 
 ### Requirements
 
@@ -110,10 +142,19 @@ cmake --build llama.cpp/build --target llama-bench -j
 
 ```bash
 # vLLM — Qwen2.5-3B, 4-bit weights
-python3 bench_vllm.py --model 3b --quant int4
+python3 bench_vllm.py --model qwen2.5 --modelsize 3b --quant int4
+
+# vLLM — Qwen3-8B, 4-bit (AWQ) weights
+python3 bench_vllm.py --model qwen3 --modelsize 8b --quant int4
 
 # llama.cpp — Qwen2.5-7B, fp16
-python3 bench_llamacpp.py --model 7b --quant fp16
+python3 bench_llamacpp.py --model qwen2.5 --modelsize 7b --quant fp16
+
+# llama.cpp — Qwen3-4B, 8-bit (Q8_0) weights
+python3 bench_llamacpp.py --model qwen3 --modelsize 4b --quant int8
+
+# vLLM — Qwen3-8B int8 needs a third-party GPTQ-Int8 repo (no official one):
+python3 bench_vllm.py --model qwen3 --modelsize 8b --quant int8 --repo <hf_gptq_int8_repo>
 ```
 
 ### What is Measured
